@@ -48,10 +48,6 @@ logging.basicConfig(#filename="./ASIAIR_"+str(sys.argv[2])+".log",
                     datefmt="%H:%M:%S",
                     level=logging.DEBUG)
 
-
-# create socket object
-clientSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
 # get connection details from params
 asisair_host  = str(sys.argv[1])
 mqtt_host     = str(sys.argv[2])
@@ -81,6 +77,7 @@ CAMERA_COMMANDS_4700 = [
     ("get_control_value", ["CoolerOn"]),
     ("get_control_value", ["CoolPowerPerc"]),
     ("get_control_value", ["TargetTemp"]),
+    ("get_control_value", ["AntiDewHeater"]),
     ]
 SEQUENCE_COMMANDS_4700 = ["get_sequence", "get_sequence_number", "get_sequence_setting"]
 TELESCOPE_COMMANDS_4400 = [
@@ -165,12 +162,7 @@ RTMP                        // Related to video stacking
 topics = ['*']
 
 
-# setup
-print("connecting MQTT: " + str(mqtt_host) + ':' + str(mqtt_port))
-clientMQTT = mqtt.Client()
-clientMQTT.username_pw_set(username=mqtt_username, password=mqtt_password)
-clientMQTT.connect(mqtt_host, mqtt_port, 60)
-clientMQTT.loop_start()
+
 
 STRETCH_STF_TARGET_BACKGROUND = 0.25
 STRETCH_STF_CLIPPING_POINT = -2.8
@@ -184,24 +176,35 @@ def mqtt_publish(mqtt, type, message):
 
 cmdid = 0
 
-async def poll_and_keepalive(writer, commands, interval_seconds: int):
+def make_jsonrpc_command(id, command):
+    if isinstance(command, tuple):
+        (method, params) = command
+        return {"id": id, "method": method, "params": params}
+    else:
+        return {"id": id, "method": command}
+    
+async def poll_and_keepalive(writer: asyncio.StreamWriter, cmd_q: asyncio.Queue, commands, interval_seconds: int):
     id = 1
+    for command in commands:
+        await cmd_q.put(command)
     while True:
-        for command in commands:
-            if isinstance(command, tuple):
-                (method, params) = command
-                c = {"id": id, "method": method, "params": params}
-            else:
-                c = {"id": id, "method": command}
-            writer.write((json.dumps(c) + "\r\n").encode())
+        try:
+            command = await asyncio.wait_for(cmd_q.get(), interval_seconds)
+            writer.write((json.dumps(make_jsonrpc_command(id, command)) + "\r\n").encode())
             id += 1
-        await asyncio.sleep(interval_seconds)
+        except asyncio.TimeoutError:
+            for command in commands:
+                writer.write((json.dumps(make_jsonrpc_command(id, command)) + "\r\n").encode())
+                id += 1
+        except Exception as ex:
+            logging.error("Failed in command handling: %s", ex)
+        #await asyncio.sleep(interval_seconds)
 
 
-async def read_events(q, port: int):
+async def read_events(q, cmd_q, port: int):
     print("Connecting to port " + str(port))
     reader, writer = await asyncio.open_connection('asiair', port)
-    keepalive = asyncio.create_task(poll_and_keepalive(writer, COMMANDS[str(port)], 8))
+    keepalive = asyncio.create_task(poll_and_keepalive(writer, cmd_q, COMMANDS[str(port)], 8))
     while True:
         message = await reader.readline()
         if not message:
@@ -260,17 +263,14 @@ async def read_images(q, image_available, port=4800):
                             (result, imageData) = cv2.imencode(".png", imageData)
                             byteArray = bytearray(imageData)
                             print("MQTT publish result: " + str(result) + "; Len: " + str(len(byteArray)))
-                            mqttMsg = clientMQTT.publish("asiair/image/latestImage", byteArray, qos=1, retain=True)
-                            print("Waiting to publish image...")
-                            mqttMsg.wait_for_publish()
-                            print("... done")
+                            await q.put(byteArray)
                 else:
                     print(str(port) + " Width <= 0")
                     print(str(port) + " => " + str(header))
         except Exception as ex:
             logging.error(ex)
 
-async def create_mqtt_config(sys_id, device_type, device_friendly_name, device_functions):
+async def create_mqtt_config(mqtt, sys_id, device_type, device_friendly_name, device_functions, cmd_q_4700: asyncio.Queue = None):
     """Creates configuration topics within the homeassistant sensor and camera topics.
 
     Args:
@@ -350,14 +350,25 @@ async def create_mqtt_config(sys_id, device_type, device_friendly_name, device_f
             config["current_temperature_template"] = "{{ value_json.value }}"
             config["temperature_state_topic"] = "asiair/targettemp"
             config["temperature_state_template"] = "{{ value_json.value }}"
-            config["power_command_topic"] = "asiair/" + device_type + "/" + sys_id_ + "/cmd"
-            config["temperature_command_topic"] = "asiair/" + device_type + "/" + sys_id_ + "/temp"
+            if cmd_q_4700 is not None:
+                config["temperature_command_topic"] = "asiair/set_control_value/cmd"
+                config["temperature_command_template"] = "[\"TargetTemp\", {{ value }}]"
 
+                config["mode_command_topic"] = "asiair/set_control_value/cmd"
+                config["mode_command_template"] = "[\"CoolerOn\", {% if value == 'off' %}0{% else %}1{% endif %}]"
+
+                mqtt.subscribe("asiair/set_control_value/cmd")
 
         #if function[SENSOR_TYPE] == TYPE_TEXT:
         #    config["command_topic"] = ("astrolive/" + device_type + "/" + sys_id_ + "/cmd",)
 
-        #if function[SENSOR_DEVICE_CLASS] == DEVICE_CLASS_SWITCH:
+        if function[SENSOR_DEVICE_CLASS] == DEVICE_CLASS_SWITCH:
+            logging.debug("Device friendly name %s", device_function_low)
+            if device_function_low == "dew_heater_on":
+                config["command_topic"] = "asiair/set_control_value/cmd"
+                config["command_template"] = "[\"AntiDewHeater\", {% if value == 'ON' %}1{% else %}0{% endif %}]"
+                mqtt.subscribe("asiair/set_control_value/cmd")
+            
         #    config["command_topic"] = (
         #        "astrolive/" + device_type + "/" + sys_id_ + "/set" + "_" + device_function_low
         #    )
@@ -366,7 +377,7 @@ async def create_mqtt_config(sys_id, device_type, device_friendly_name, device_f
         #        "astrolive/" + device_type + "/" + sys_id_ + "/set" + "_" + device_function_low
         #    )
 
-        clientMQTT.publish(root_topic + "config", json.dumps(config), qos=0, retain=True)
+        mqtt.publish(root_topic + "config", json.dumps(config), qos=0, retain=True)
 
     logging.debug("Published MQTT Config for a %s", device_type)
 
@@ -387,77 +398,109 @@ async def create_mqtt_config(sys_id, device_type, device_friendly_name, device_f
                 "manufacturer": "ASIAIR-MQTT Bridge",
             },
         }
-        clientMQTT.publish(root_topic + "config", json.dumps(config), qos=0, retain=True)
+        mqtt.publish(root_topic + "config", json.dumps(config), qos=0, retain=True)
         logging.debug("Published MQTT Camera Config for a %s", device_type)
 
     return None
 
-async def mqtt_publisher(q, image_available):
+async def mqtt_publisher(q, image_available, cmd_q_4700):
     # Cached values
     wheel_names = None
     pi_info = None
+
+    def on_message(client, userdata, message: mqtt.MQTTMessage):
+        cmd_q_4700: asyncio.Queue = userdata.get("cmd_q_4700", None)
+        if (cmd_q_4700):
+            logging.debug(">>>>>>>>>>> %s: %s", message.topic, message.payload)
+            if message.topic == "asiair/set_control_value/cmd":
+                cmd_q_4700.put_nowait(("set_control_value", json.loads(message.payload)))
+        #logging.info(message)
+
+    userdata = {
+        "cmd_q_4700": cmd_q_4700,
+    }
+
+    # setup
+    print("connecting MQTT: " + str(mqtt_host) + ':' + str(mqtt_port))
+    clientMQTT = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2, userdata=userdata)
+    clientMQTT.username_pw_set(username=mqtt_username, password=mqtt_password)
+    clientMQTT.connect(mqtt_host, mqtt_port, 60)
+    clientMQTT.on_message = on_message
+    clientMQTT.loop_start()
+
     # Set up MQTT Home Assistant config.
     try:
-        asyncio.create_task(create_mqtt_config("asiair.asiair", DEVICE_TYPE_ASIAIR, "ASIAIR", FUNCTIONS[DEVICE_TYPE_ASIAIR]))
-        asyncio.create_task(create_mqtt_config("asiair.camera", DEVICE_TYPE_CAMERA, "Camera", FUNCTIONS[DEVICE_TYPE_CAMERA]))
-        asyncio.create_task(create_mqtt_config("asiair.filterwheel", DEVICE_TYPE_FILTERWHEEL, "FilterWheel", FUNCTIONS[DEVICE_TYPE_FILTERWHEEL]))
-        asyncio.create_task(create_mqtt_config("asiair.focuser", DEVICE_TYPE_FOCUSER, "Focuser", FUNCTIONS[DEVICE_TYPE_FOCUSER]))
-        asyncio.create_task(create_mqtt_config("asiair.telescope", DEVICE_TYPE_TELESCOPE, "Telescope", FUNCTIONS[DEVICE_TYPE_TELESCOPE]))
+        asyncio.create_task(create_mqtt_config(clientMQTT, "asiair.asiair", DEVICE_TYPE_ASIAIR, "ASIAIR", FUNCTIONS[DEVICE_TYPE_ASIAIR]))
+        asyncio.create_task(create_mqtt_config(clientMQTT, "asiair.camera", DEVICE_TYPE_CAMERA, "Camera", FUNCTIONS[DEVICE_TYPE_CAMERA], cmd_q_4700))
+        asyncio.create_task(create_mqtt_config(clientMQTT, "asiair.filterwheel", DEVICE_TYPE_FILTERWHEEL, "FilterWheel", FUNCTIONS[DEVICE_TYPE_FILTERWHEEL]))
+        asyncio.create_task(create_mqtt_config(clientMQTT, "asiair.focuser", DEVICE_TYPE_FOCUSER, "Focuser", FUNCTIONS[DEVICE_TYPE_FOCUSER]))
+        asyncio.create_task(create_mqtt_config(clientMQTT, "asiair.telescope", DEVICE_TYPE_TELESCOPE, "Telescope", FUNCTIONS[DEVICE_TYPE_TELESCOPE]))
     except Exception as e:
         logging.debug(e)
         raise
     while True:
         message = await q.get()
-        x = message
-        # replace bad characters - from asiair_mqtt - need to test if needed
-        message = message.replace(b"<\x90\xadE\xb6>", b"???")
-        message = message.replace(b"<\xe8>", b"???")
-        message = message.decode('iso-8859-1')
-        try:
-            message = json.loads(message)
-            message['utime'] = int(time.time())
-            message['instance'] = asisair_host
+        if isinstance(message, bytearray):
+            mqttMsg = clientMQTT.publish("asiair/image/latestImage", message, qos=1, retain=True)
+            print("Waiting to publish image...")
+            mqttMsg.wait_for_publish()
+            print("... done")
+        else:
+            x = message
+            # replace bad characters - from asiair_mqtt - need to test if needed
+            message = message.replace(b"<\x90\xadE\xb6>", b"???")
+            message = message.replace(b"<\xe8>", b"???")
+            message = message.decode('iso-8859-1')
             try:
-                if message["Event"] == "Exposure" and message["state"] == "complete":
-                    image_available.set()
-            except KeyError:
-                pass
-            if "method" in message and message["code"] == 0:
-                if message["method"] == "get_control_value":
-                    message["method"] = str(message["result"]["name"]).lower()
-                if message["method"] == "pi_get_info":
-                    pi_info = message["result"] # Send HA device discovery message.
-                elif message["method"] == "get_wheel_slot_name":
-                    wheel_names = message["result"] # Send HA device discovery message.
-                elif message["method"] == "get_wheel_position":
-                    if wheel_names != None:
-                        mqtt_publish(clientMQTT, "WheelName", wheel_names[message["result"]])
-            elif "Event" in message:
-                if message["Event"] == "WheelMove" and message["state"] == "complete":
-                    mqtt_publish(clientMQTT, "WheelName", wheel_names[message["position"]])
-                    mqtt_publish(clientMQTT, "get_wheel_position", message["position"])
-            else:
-                logging.error("Unknown response: %s", str(x))
+                message = json.loads(message)
+                message['utime'] = int(time.time())
+                message['instance'] = asisair_host
+                try:
+                    if message["Event"] == "Exposure" and message["state"] == "complete":
+                        image_available.set()
+                except KeyError:
+                    pass
+                if "method" in message and message["code"] == 0:
+                    if message["method"] == "get_control_value":
+                        message["method"] = str(message["result"]["name"]).lower()
+                    if message["method"] == "pi_get_info":
+                        pi_info = message["result"] # Send HA device discovery message.
+                    elif message["method"] == "get_wheel_slot_name":
+                        wheel_names = message["result"] # Send HA device discovery message.
+                    elif message["method"] == "get_wheel_position":
+                        if wheel_names != None:
+                            mqtt_publish(clientMQTT, "WheelName", wheel_names[message["result"]])
+                elif "Event" in message:
+                    if message["Event"] == "WheelMove" and message["state"] == "complete":
+                        mqtt_publish(clientMQTT, "WheelName", wheel_names[message["position"]])
+                        mqtt_publish(clientMQTT, "get_wheel_position", message["position"])
+                    elif message["Event"] == "CameraControlChange":
+                        for command in CAMERA_COMMANDS_4700:
+                            await cmd_q_4700.put(command)
+                else:
+                    logging.error("Unknown response: %s", str(x))
 
-            if "Event" in message and (message["Event"] in topics or "*" in topics):
-                mqtt_publish(clientMQTT, message["Event"], message)
-            elif "method" in message and message["code"] == 0:
-                mqtt_publish(clientMQTT, message["method"], message["result"])
-            else:
-                #if _debug: print(str(asisair_host) + ":" + str(asisair_port) + "(ignored : " + str(json.dumps(message)))
-                pass
-        except Exception as ex:
-            logging.debug("Failed: %s", ex)
+                if "Event" in message and (message["Event"] in topics or "*" in topics):
+                    mqtt_publish(clientMQTT, message["Event"], message)
+                elif "method" in message and message["code"] == 0:
+                    mqtt_publish(clientMQTT, message["method"], message["result"])
+                else:
+                    #if _debug: print(str(asisair_host) + ":" + str(asisair_port) + "(ignored : " + str(json.dumps(message)))
+                    pass
+            except Exception as ex:
+                logging.debug("Failed: %s", ex)
         q.task_done()
 
 async def main():
     #async with asyncio.TaskGroup() as tg:
     q = asyncio.Queue()
+    cmd_q_4400 = asyncio.Queue()
+    cmd_q_4700 = asyncio.Queue()
     image_available = asyncio.Event()
-    port4400 = asyncio.create_task(read_events(q, 4400))
-    port4700 = asyncio.create_task(read_events(q, 4700))
+    port4400 = asyncio.create_task(read_events(q, cmd_q_4400, 4400))
+    port4700 = asyncio.create_task(read_events(q, cmd_q_4700, 4700))
     images = asyncio.create_task(read_images(q, image_available))
-    printer = asyncio.create_task(mqtt_publisher(q, image_available))
+    printer = asyncio.create_task(mqtt_publisher(q, image_available, cmd_q_4700))
 
     await port4400
     await port4700

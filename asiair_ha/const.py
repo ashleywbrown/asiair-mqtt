@@ -392,7 +392,7 @@ FUNCTIONS = {
             DEVICE_CLASS_NONE,
             STATE_CLASS_NONE,
             "asiair/scope_get_track_state",
-            "{{ value_json }}"
+            "{% if value_json == False %}OFF{% else %}ON{% endif %}"
         ],
 #        [
 #            TYPE_SENSOR,
@@ -474,14 +474,36 @@ FUNCTIONS = {
             "asiair/cooleron",
             "{% if value_json.value == 0 %}OFF{% else %}ON{% endif %}"
         ],
-        #[
-        #    TYPE_SENSOR,
-        #    "Cooler Power",
-        #    UNIT_OF_MEASUREMENT_NONE,
-        #    DEVICE_TYPE_CAMERA_ICON,
-        #    DEVICE_CLASS_NONE,
-        #    STATE_CLASS_MEASUREMENT,
-        #],
+        [
+            TYPE_SENSOR,
+            "Cooler Power",
+            UNIT_OF_MEASUREMENT_PERCENTAGE,
+            DEVICE_TYPE_CAMERA_ICON,
+            DEVICE_CLASS_NONE,
+            STATE_CLASS_MEASUREMENT,
+            "asiair/coolpowerperc",
+            "{{ value_json.value }}"
+        ],
+        [
+            TYPE_SENSOR,
+            "Gain",
+            UNIT_OF_MEASUREMENT_NONE,
+            DEVICE_TYPE_CAMERA_ICON,
+            DEVICE_CLASS_NONE,
+            STATE_CLASS_MEASUREMENT,
+            "asiair/gain",
+            "{{ value_json.value }}"
+        ],
+        [
+            TYPE_SWITCH,
+            "Dew Heater on",
+            UNIT_OF_MEASUREMENT_NONE,
+            "mdi:heating-coil",
+            DEVICE_CLASS_SWITCH,
+            STATE_CLASS_NONE,
+            "asiair/antidewheater",
+            "{% if value_json.value == 0 %}OFF{% else %}ON{% endif %}"
+        ],
         #[
         #    TYPE_SENSOR,
         #    "Image array",
