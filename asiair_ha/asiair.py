@@ -15,6 +15,7 @@ from const import (
     DEVICE_TYPE_FILTERWHEEL,
     DEVICE_TYPE_FOCUSER,
     DEVICE_TYPE_CAMERA_FILE,
+    DEVICE_TYPE_TELESCOPE,
     FUNCTIONS,
 #    MANUFACTURER,
     SENSOR_DEVICE_CLASS,
@@ -30,6 +31,7 @@ from const import (
     STRETCH_ALGORITHM,
     STRETCH_AP_ID,
     STRETCH_STF_ID,
+    TYPE_CLIMATE,
     TYPE_TEXT,
 )
 
@@ -60,16 +62,29 @@ mqtt_password     = str(sys.argv[5])
 # Commands to interrogate the system:
 # https://www.cloudynights.com/topic/900861-seestar-s50asiair-jailbreak-ssh/page-4
 # These can be sent on connection or every X seconds.
+#
+# The ideal protocol here is to:
+# - get_pi_info => get IDs for device registration
+# - send device config messages
+# - poll and save certain commands that can be updated by events
+# - on the event, send the event topic and the command response update
+#
+# For certain things, e.g. the filter wheel, it makes sense to cache the
+# list response and send a friendlier name for the filterwheel slot.
 FILTER_WHEEL_COMMANDS_4700 = ["get_wheel_slot_name", "get_wheel_state", "get_wheel_setting", "get_wheel_position"]
 CAMERA_COMMANDS_4700 = [
     "get_camera_state",
     "get_camera_info", # camera capabilities - pixel size, dimensions, cooling etc
     "get_camera_exp_and_bin",
     "get_subframe",
+    ("get_control_value", ["Gain"]),
+    ("get_control_value", ["CoolerOn"]),
+    ("get_control_value", ["CoolPowerPerc"]),
+    ("get_control_value", ["TargetTemp"]),
     ]
 SEQUENCE_COMMANDS_4700 = ["get_sequence", "get_sequence_number", "get_sequence_setting"]
 TELESCOPE_COMMANDS_4400 = [
-    "scope_get_ra_dec", "scope_get_location", "scope_get_pierside", "scope_get_track_state", "scope_is_moving" # 4400
+    "scope_get_ra_dec", "scope_get_location", "scope_get_pierside", "scope_get_track_state", "scope_is_moving", "scope_get_horiz_coord", "scope_get_track_mode" # 4400
     ]
 TELESCOPE_COMMANDS_4700 = [
     "get_focal_length",
@@ -91,7 +106,8 @@ COMMANDS_PORT_4700 = (FILTER_WHEEL_COMMANDS_4700 +
     SEQUENCE_COMMANDS_4700 +
     TELESCOPE_COMMANDS_4700 +
     FOCUSER_COMMANDS_4700 +
-    PI_STATUS_COMMANDS_4700)
+    PI_STATUS_COMMANDS_4700 + 
+    CAMERA_COMMANDS_4700)
 
 COMMANDS_PORT_4400 = (TELESCOPE_COMMANDS_4400)
 COMMANDS_PORT_4800 = ["get_current_img"]
@@ -172,7 +188,12 @@ async def poll_and_keepalive(writer, commands, interval_seconds: int):
     id = 1
     while True:
         for command in commands:
-            writer.write((json.dumps({"id": id, "method": command}) + "\r\n").encode())
+            if isinstance(command, tuple):
+                (method, params) = command
+                c = {"id": id, "method": method, "params": params}
+            else:
+                c = {"id": id, "method": command}
+            writer.write((json.dumps(c) + "\r\n").encode())
             id += 1
         await asyncio.sleep(interval_seconds)
 
@@ -197,7 +218,6 @@ async def read_images(q, image_available, port=4800):
             await image_available.wait()
             image_available.clear()
             reader, writer = await asyncio.open_connection('asiair', port)
-            print(str(port) + " Would receive image")
             command = "get_current_img"
             writer.write((json.dumps({"id": id, "method": command}) + "\r\n").encode())
             await writer.drain()
@@ -214,10 +234,10 @@ async def read_images(q, image_available, port=4800):
                 remaining = size
                 print(str(port) + " Header " + str((size, width, height)))
                 if width > 0:
-                    print(str(port) + " Zipped Image Size: " + str(size) + " " + str(width) + "x" + str(height))
-                    with tempfile.TemporaryFile("w+b") as f: #open("asiair.zip", mode="w+b") as f: # replace with temporary file once this all works!
+                    logging.debug(str(port) + " Zipped Image Size: " + str(size) + " " + str(width) + "x" + str(height))
+                    with tempfile.TemporaryFile("w+b") as f:
                         while remaining > 0:
-                            chunkSize = min(remaining, 1024*1024)
+                            chunkSize = min(remaining, 4*1024*1024)
                             chunk = await reader.read(chunkSize)
                             f.write(chunk)
                             remaining = remaining - len(chunk)
@@ -318,6 +338,22 @@ async def create_mqtt_config(sys_id, device_type, device_friendly_name, device_f
         if function[SENSOR_UNIT] != "" and function[SENSOR_UNIT] is not None:
             config["unit_of_measurement"] = function[SENSOR_UNIT]
 
+        if function[SENSOR_TYPE] == TYPE_CLIMATE:
+            config["action_topic"] = "asiair/coolpowerperc"
+            config["action_template"] = "{% if value_json.value == 0 %}off{% else %}cooling{% endif %}"
+            config["mode_state_topic"] = "asiair/cooleron"
+            config["mode_state_template"] = "{% if value_json.value == 0 %}off{% else %}cool{% endif %}"
+            config["modes"] = ["off", "cool"]
+            config["min_temp"] = -40
+            config["max_temp"] = 40
+            config["current_temperature_topic"] = "asiair/Temperature"
+            config["current_temperature_template"] = "{{ value_json.value }}"
+            config["temperature_state_topic"] = "asiair/targettemp"
+            config["temperature_state_template"] = "{{ value_json.value }}"
+            config["power_command_topic"] = "asiair/" + device_type + "/" + sys_id_ + "/cmd"
+            config["temperature_command_topic"] = "asiair/" + device_type + "/" + sys_id_ + "/temp"
+
+
         #if function[SENSOR_TYPE] == TYPE_TEXT:
         #    config["command_topic"] = ("astrolive/" + device_type + "/" + sys_id_ + "/cmd",)
 
@@ -357,12 +393,16 @@ async def create_mqtt_config(sys_id, device_type, device_friendly_name, device_f
     return None
 
 async def mqtt_publisher(q, image_available):
+    # Cached values
+    wheel_names = None
+    pi_info = None
     # Set up MQTT Home Assistant config.
     try:
         asyncio.create_task(create_mqtt_config("asiair.asiair", DEVICE_TYPE_ASIAIR, "ASIAIR", FUNCTIONS[DEVICE_TYPE_ASIAIR]))
         asyncio.create_task(create_mqtt_config("asiair.camera", DEVICE_TYPE_CAMERA, "Camera", FUNCTIONS[DEVICE_TYPE_CAMERA]))
         asyncio.create_task(create_mqtt_config("asiair.filterwheel", DEVICE_TYPE_FILTERWHEEL, "FilterWheel", FUNCTIONS[DEVICE_TYPE_FILTERWHEEL]))
         asyncio.create_task(create_mqtt_config("asiair.focuser", DEVICE_TYPE_FOCUSER, "Focuser", FUNCTIONS[DEVICE_TYPE_FOCUSER]))
+        asyncio.create_task(create_mqtt_config("asiair.telescope", DEVICE_TYPE_TELESCOPE, "Telescope", FUNCTIONS[DEVICE_TYPE_TELESCOPE]))
     except Exception as e:
         logging.debug(e)
         raise
@@ -382,6 +422,23 @@ async def mqtt_publisher(q, image_available):
                     image_available.set()
             except KeyError:
                 pass
+            if "method" in message and message["code"] == 0:
+                if message["method"] == "get_control_value":
+                    message["method"] = str(message["result"]["name"]).lower()
+                if message["method"] == "pi_get_info":
+                    pi_info = message["result"] # Send HA device discovery message.
+                elif message["method"] == "get_wheel_slot_name":
+                    wheel_names = message["result"] # Send HA device discovery message.
+                elif message["method"] == "get_wheel_position":
+                    if wheel_names != None:
+                        mqtt_publish(clientMQTT, "WheelName", wheel_names[message["result"]])
+            elif "Event" in message:
+                if message["Event"] == "WheelMove" and message["state"] == "complete":
+                    mqtt_publish(clientMQTT, "WheelName", wheel_names[message["position"]])
+                    mqtt_publish(clientMQTT, "get_wheel_position", message["position"])
+            else:
+                logging.error("Unknown response: %s", str(x))
+
             if "Event" in message and (message["Event"] in topics or "*" in topics):
                 mqtt_publish(clientMQTT, message["Event"], message)
             elif "method" in message and message["code"] == 0:
@@ -390,7 +447,7 @@ async def mqtt_publisher(q, image_available):
                 #if _debug: print(str(asisair_host) + ":" + str(asisair_port) + "(ignored : " + str(json.dumps(message)))
                 pass
         except Exception as ex:
-            logging.debug("Failed: %s", str(ex))
+            logging.debug("Failed: %s", ex)
         q.task_done()
 
 async def main():

@@ -75,6 +75,7 @@ TYPE_BINARY_SENSOR = "binary_sensor"
 TYPE_SENSOR = "sensor"
 TYPE_SWITCH = "switch"
 TYPE_TEXT = "text"
+TYPE_CLIMATE = "climate"
 
 UNIT_OF_MEASUREMENT_NONE = None
 UNIT_OF_MEASUREMENT_ARCSEC_PER_SEC = '"/s'
@@ -307,22 +308,22 @@ FUNCTIONS = {
         ],
     ),
     DEVICE_TYPE_TELESCOPE: (
-        [
-            TYPE_BINARY_SENSOR,
-            "At home",
-            UNIT_OF_MEASUREMENT_NONE,
-            DEVICE_TYPE_TELESCOPE_ICON,
-            DEVICE_CLASS_NONE,
-            STATE_CLASS_NONE,
-        ],
-        [
-            TYPE_BINARY_SENSOR,
-            "At park",
-            UNIT_OF_MEASUREMENT_NONE,
-            DEVICE_TYPE_TELESCOPE_ICON,
-            DEVICE_CLASS_NONE,
-            STATE_CLASS_NONE,
-        ],
+#        [
+#            TYPE_BINARY_SENSOR,
+#            "At home",
+#            UNIT_OF_MEASUREMENT_NONE,
+#            DEVICE_TYPE_TELESCOPE_ICON,
+#            DEVICE_CLASS_NONE,
+#            STATE_CLASS_NONE,
+#        ],
+#        [
+#            TYPE_BINARY_SENSOR,
+#            "At park",
+#            UNIT_OF_MEASUREMENT_NONE,
+#            DEVICE_TYPE_TELESCOPE_ICON,
+#            DEVICE_CLASS_NONE,
+#            STATE_CLASS_NONE,
+#        ],
         [
             TYPE_SENSOR,
             "Altitude",
@@ -330,6 +331,8 @@ FUNCTIONS = {
             DEVICE_TYPE_TELESCOPE_ICON,
             DEVICE_CLASS_NONE,
             STATE_CLASS_MEASUREMENT,
+            "asiair/scope_get_horiz_coord",
+            "{{ value_json[0] }}"
         ],
         [
             TYPE_SENSOR,
@@ -338,6 +341,8 @@ FUNCTIONS = {
             DEVICE_TYPE_TELESCOPE_ICON,
             DEVICE_CLASS_NONE,
             STATE_CLASS_MEASUREMENT,
+            "asiair/scope_get_horiz_coord",
+            "{{ value_json[1] }}"
         ],
         [
             TYPE_SENSOR,
@@ -346,6 +351,8 @@ FUNCTIONS = {
             DEVICE_TYPE_TELESCOPE_ICON,
             DEVICE_CLASS_NONE,
             STATE_CLASS_MEASUREMENT,
+            "asiair/scope_get_ra_dec",
+            "{{ value_json[1] }}"
         ],
         [
             TYPE_SENSOR,
@@ -354,6 +361,8 @@ FUNCTIONS = {
             DEVICE_TYPE_TELESCOPE_ICON,
             DEVICE_CLASS_NONE,
             STATE_CLASS_MEASUREMENT,
+            "asiair/scope_get_ra_dec",
+            "{{ value_json[0] }}"
         ],
         [
             TYPE_SENSOR,
@@ -362,15 +371,37 @@ FUNCTIONS = {
             DEVICE_TYPE_TELESCOPE_ICON,
             DEVICE_CLASS_NONE,
             STATE_CLASS_NONE,
+            "asiair/scope_get_pierside",
+            "{{ value_json }}"
         ],
         [
             TYPE_SENSOR,
-            "Site elevation",
-            UNIT_OF_MEASUREMENT_METER,
+            "Tracking Mode",
+            UNIT_OF_MEASUREMENT_NONE,
             DEVICE_TYPE_TELESCOPE_ICON,
-            DEVICE_CLASS_DISTANCE,
-            STATE_CLASS_MEASUREMENT,
+            DEVICE_CLASS_NONE,
+            STATE_CLASS_NONE,
+            "asiair/scope_get_track_mode",
+            "{{ value_json['list'][value_json['index']] }}"
         ],
+        [
+            TYPE_BINARY_SENSOR,
+            "Tracking",
+            UNIT_OF_MEASUREMENT_NONE,
+            DEVICE_TYPE_TELESCOPE_ICON,
+            DEVICE_CLASS_NONE,
+            STATE_CLASS_NONE,
+            "asiair/scope_get_track_state",
+            "{{ value_json }}"
+        ],
+#        [
+#            TYPE_SENSOR,
+#            "Site elevation",
+#            UNIT_OF_MEASUREMENT_METER,
+#            DEVICE_TYPE_TELESCOPE_ICON,
+#            DEVICE_CLASS_DISTANCE,
+#            STATE_CLASS_MEASUREMENT,
+#        ],
         [
             TYPE_SENSOR,
             "Site Latitude",
@@ -378,6 +409,8 @@ FUNCTIONS = {
             DEVICE_TYPE_TELESCOPE_ICON,
             DEVICE_CLASS_NONE,
             STATE_CLASS_MEASUREMENT,
+            "asiair/scope_get_location",
+            "{{ value_json[0] }}"
         ],
         [
             TYPE_SENSOR,
@@ -386,6 +419,8 @@ FUNCTIONS = {
             DEVICE_TYPE_TELESCOPE_ICON,
             DEVICE_CLASS_NONE,
             STATE_CLASS_MEASUREMENT,
+            "asiair/scope_get_location",
+            "{{ value_json[1] }}"
         ],
         [
             TYPE_BINARY_SENSOR,
@@ -394,17 +429,21 @@ FUNCTIONS = {
             DEVICE_TYPE_TELESCOPE_ICON,
             DEVICE_CLASS_NONE,
             STATE_CLASS_NONE,
+            "asiair/scope_is_moving",
+            "{{ value_json != 'none' }}"
         ],
     ),
     DEVICE_TYPE_CAMERA: (
-        #[
-        #    TYPE_SENSOR,
-        #    "Camera state",
-        #    UNIT_OF_MEASUREMENT_NONE,
-        #    DEVICE_TYPE_CAMERA_ICON,
-        #    DEVICE_CLASS_NONE,
-        #    STATE_CLASS_MEASUREMENT,
-        #],
+        [
+            TYPE_SENSOR,
+            "Camera state",
+            UNIT_OF_MEASUREMENT_NONE,
+            DEVICE_TYPE_CAMERA_ICON,
+            DEVICE_CLASS_NONE,
+            STATE_CLASS_MEASUREMENT,
+            "asiair/get_camera_state",
+            "{{ value_json.state }}"
+        ],
         [
             TYPE_SENSOR,
             "CCD temperature",
@@ -415,14 +454,26 @@ FUNCTIONS = {
             "asiair/Temperature",
             "{{ value_json.value }}"
         ],
-        #[
-        #    TYPE_BINARY_SENSOR,
-        #    "Cooler on",
-        #    UNIT_OF_MEASUREMENT_NONE,
-        #    DEVICE_TYPE_CAMERA_ICON,
-        #    DEVICE_CLASS_NONE,
-        #    STATE_CLASS_NONE,
-        #],
+        [
+            TYPE_CLIMATE,
+            "Cooling",
+            UNIT_OF_MEASUREMENT_TEMP_CELSIUS,
+            DEVICE_TYPE_CAMERA_ICON,
+            DEVICE_CLASS_TEMPERATURE,
+            STATE_CLASS_MEASUREMENT,
+            "asiair/Temperature",
+            "{{ value_json.value }}"
+        ],
+        [
+            TYPE_BINARY_SENSOR,
+            "Cooler on",
+            UNIT_OF_MEASUREMENT_NONE,
+            DEVICE_TYPE_CAMERA_ICON,
+            DEVICE_CLASS_NONE,
+            STATE_CLASS_NONE,
+            "asiair/cooleron",
+            "{% if value_json.value == 0 %}OFF{% else %}ON{% endif %}"
+        ],
         #[
         #    TYPE_SENSOR,
         #    "Cooler Power",
@@ -537,14 +588,17 @@ FUNCTIONS = {
             "asiair/get_wheel_position",
             "{{ value_json }}"
         ],
-#        [
-#            TYPE_SENSOR,
-#            "Current",
-#            UNIT_OF_MEASUREMENT_NONE,
-#            DEVICE_TYPE_FILTERWHEEL_ICON,
-#            DEVICE_CLASS_NONE,
-#            STATE_CLASS_NONE,
-#        ],
+        [
+            TYPE_SENSOR,
+            "Current",
+            UNIT_OF_MEASUREMENT_NONE,
+            DEVICE_TYPE_FILTERWHEEL_ICON,
+            DEVICE_CLASS_NONE,
+            STATE_CLASS_NONE,
+            "asiair/WheelName",
+            "{{ value_json }}"
+
+        ],
     ),
 #    DEVICE_TYPE_ROTATOR: (
 #        [
