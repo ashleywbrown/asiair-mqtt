@@ -67,6 +67,7 @@ SENSOR_DEVICE_CLASS = 4
 SENSOR_STATE_CLASS = 5
 SENSOR_STATE_TOPIC = 6
 SENSOR_VALUE_TEMPLATE = 7
+SENSOR_EXTRA_FIELDS = 8
 
 STATE_ON = "on"
 STATE_OFF = "off"
@@ -254,7 +255,10 @@ FUNCTIONS = {
             "voltage",
             STATE_CLASS_MEASUREMENT,
             "asiair/get_power_supply",
-            "{{ value_json[0][0] | float }}"
+            "{{ value_json[0][0] | float }}",
+            {
+                "suggested_display_precision": 2
+            }
         ],
         [
             TYPE_SENSOR,
@@ -264,7 +268,10 @@ FUNCTIONS = {
             "voltage",
             STATE_CLASS_MEASUREMENT,
             "asiair/get_power_supply",
-            "{{ value_json[1][0] | float }}"
+            "{{ value_json[1][0] | float }}",
+            {
+                "suggested_display_precision": 2
+            }
         ],
         [
             TYPE_SENSOR,
@@ -274,7 +281,10 @@ FUNCTIONS = {
             "voltage",
             STATE_CLASS_MEASUREMENT,
             "asiair/get_power_supply",
-            "{{ value_json[2][0] | float }}"
+            "{{ value_json[2][0] | float }}",
+            {
+                "suggested_display_precision": 2
+            }
         ],
         [
             TYPE_SENSOR,
@@ -284,7 +294,10 @@ FUNCTIONS = {
             "voltage",
             STATE_CLASS_MEASUREMENT,
             "asiair/get_power_supply",
-            "{{ value_json[3][0] | float }}"
+            "{{ value_json[3][0] | float }}",
+            {
+                "suggested_display_precision": 2
+            }
         ],
         [
             TYPE_SENSOR,
@@ -294,7 +307,10 @@ FUNCTIONS = {
             "voltage",
             STATE_CLASS_MEASUREMENT,
             "asiair/get_power_supply",
-            "{{ value_json[4][0] | float }}"
+            "{{ value_json[4][0] | float }}",
+            {
+                "suggested_display_precision": 2
+            }
         ],
         [
             TYPE_SENSOR,
@@ -304,7 +320,24 @@ FUNCTIONS = {
             "current",
             STATE_CLASS_MEASUREMENT,
             "asiair/get_power_supply",
-            "{{ value_json[4][1] | float }}"
+            "{{ value_json[4][1] | float }}",
+            {
+                "suggested_display_precision": 2
+            }
+        ],
+        [
+            TYPE_SENSOR,
+            "Input Power",
+            "W",
+            "mdi:flash",
+            DEVICE_CLASS_POWER,
+            STATE_CLASS_MEASUREMENT,
+            "asiair/get_power_supply",
+            "{{ value_json[4][0] * value_json[4][1] | float }}",
+            {
+                "suggested_display_precision": 2,
+                "entity_category": "diagnostic"
+            }
         ],
     ),
     DEVICE_TYPE_TELESCOPE: (
@@ -392,7 +425,11 @@ FUNCTIONS = {
             DEVICE_CLASS_NONE,
             STATE_CLASS_NONE,
             "asiair/scope_get_track_state",
-            "{% if value_json == False %}OFF{% else %}ON{% endif %}"
+            "{% if value_json == False %}OFF{% else %}ON{% endif %}",
+            {
+                "json_attributes_topic": "asiair/scope_get_track_mode",
+                "json_attributes_template": "{ \"tracking_mode\": \"{{ value_json['list'][value_json['index']] }}\" }",
+            }
         ],
 #        [
 #            TYPE_SENSOR,
@@ -430,17 +467,31 @@ FUNCTIONS = {
             DEVICE_CLASS_NONE,
             STATE_CLASS_NONE,
             "asiair/scope_is_moving",
-            "{{ value_json != 'none' }}"
+            "{{ value_json != 'none' }}",
+            {
+                "payload_on": "none",
+                "payload_off": "none",
+            }
         ],
     ),
     DEVICE_TYPE_CAMERA: (
+        [
+            TYPE_SENSOR,
+            "Name",
+            UNIT_OF_MEASUREMENT_NONE,
+            DEVICE_TYPE_CAMERA_ICON,
+            DEVICE_CLASS_NONE,
+            STATE_CLASS_NONE,
+            "asiair/get_camera_state",
+            "{{ value_json.name }}"
+        ],
         [
             TYPE_SENSOR,
             "Camera state",
             UNIT_OF_MEASUREMENT_NONE,
             DEVICE_TYPE_CAMERA_ICON,
             DEVICE_CLASS_NONE,
-            STATE_CLASS_MEASUREMENT,
+            STATE_CLASS_NONE,
             "asiair/get_camera_state",
             "{{ value_json.state }}"
         ],
@@ -493,6 +544,16 @@ FUNCTIONS = {
             STATE_CLASS_MEASUREMENT,
             "asiair/gain",
             "{{ value_json.value }}"
+        ],
+        [
+            TYPE_SENSOR,
+            "Exposure",
+            UNIT_OF_MEASUREMENT_SECONDS,
+            DEVICE_TYPE_CAMERA_ICON,
+            DEVICE_CLASS_NONE,
+            STATE_CLASS_MEASUREMENT,
+            "asiair/exposure",
+            "{{ value_json.value / (1000*1000) }}"
         ],
         [
             TYPE_SWITCH,

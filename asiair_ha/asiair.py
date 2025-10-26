@@ -19,6 +19,7 @@ from const import (
     FUNCTIONS,
 #    MANUFACTURER,
     SENSOR_DEVICE_CLASS,
+    SENSOR_EXTRA_FIELDS,
     SENSOR_ICON,
     SENSOR_NAME,
     SENSOR_STATE_CLASS,
@@ -78,6 +79,7 @@ CAMERA_COMMANDS_4700 = [
     ("get_control_value", ["CoolPowerPerc"]),
     ("get_control_value", ["TargetTemp"]),
     ("get_control_value", ["AntiDewHeater"]),
+    ("get_control_value", ["Exposure"]),
     ]
 SEQUENCE_COMMANDS_4700 = ["get_sequence", "get_sequence_number", "get_sequence_setting"]
 TELESCOPE_COMMANDS_4400 = [
@@ -335,6 +337,9 @@ async def create_mqtt_config(mqtt, sys_id, device_type, device_friendly_name, de
                 "manufacturer": "ASIAIR-MQTT Bridge",
             },
         }
+        if len(function) >= SENSOR_EXTRA_FIELDS + 1:
+            config.update(function[SENSOR_EXTRA_FIELDS])
+
         if function[SENSOR_UNIT] != "" and function[SENSOR_UNIT] is not None:
             config["unit_of_measurement"] = function[SENSOR_UNIT]
 
@@ -477,6 +482,8 @@ async def mqtt_publisher(q, image_available, cmd_q_4700):
                     elif message["Event"] == "CameraControlChange":
                         for command in CAMERA_COMMANDS_4700:
                             await cmd_q_4700.put(command)
+                    elif message["Event"] == "ScopeTrack":
+                        mqtt_publish(clientMQTT, "scope_get_track_state", message["state"] == "on")
                 else:
                     logging.error("Unknown response: %s", str(x))
 
