@@ -77,6 +77,7 @@ TYPE_SENSOR = "sensor"
 TYPE_SWITCH = "switch"
 TYPE_TEXT = "text"
 TYPE_CLIMATE = "climate"
+TYPE_DEVICE_TRACKER = "device_tracker"
 
 UNIT_OF_MEASUREMENT_NONE = None
 UNIT_OF_MEASUREMENT_ARCSEC_PER_SEC = '"/s'
@@ -439,6 +440,20 @@ FUNCTIONS = {
 #            DEVICE_CLASS_DISTANCE,
 #            STATE_CLASS_MEASUREMENT,
 #        ],
+        [
+            TYPE_DEVICE_TRACKER,
+            "Location",
+            UNIT_OF_MEASUREMENT_NONE,
+            DEVICE_TYPE_TELESCOPE_ICON,
+            DEVICE_CLASS_NONE,
+            STATE_CLASS_NONE,
+            "asiair/dummytopic",
+            "",
+            {
+                "json_attributes_topic": "asiair/scope_get_location",
+                "json_attributes_template": "{ \"latitude\": {{ value_json[0] }}, \"longitude\": {{ value_json[1] }} }",
+            }
+        ],
         [
             TYPE_SENSOR,
             "Site Latitude",
