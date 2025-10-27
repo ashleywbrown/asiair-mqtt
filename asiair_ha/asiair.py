@@ -122,11 +122,23 @@ RTMP                        // Related to video stacking
 '''
 topics = ['*']
 
+def command_args(command):
+    if isinstance(command, tuple):
+        (method, args) = command
+    else:
+        (method, args) = (command, [])
+    return (method, args)
+
+
 class ZwoAsiair(ObservatorySoftware):
 
     def __init__(self, name, address):
         self._address = address
         self.rpc_command_id = 1
+
+        # Cache some information - factor this out to device later.
+        self.wheel_names = None
+        self.pi_info = None
         super().__init__(name)
 
     @staticmethod
@@ -165,25 +177,47 @@ class ZwoAsiair(ObservatorySoftware):
         return event.result
 
     async def discover(self):
-        result = await self.jsonrpc_call(4700, 'pi_get_info')
-        logging.debug(result)
+        self.pi_info = await self.jsonrpc_call(4700, 'pi_get_info')
+        logging.debug(self.pi_info)
   
     async def poll(self):
-        async def poll_loop():
-            while True:
-                for port in [4400, 4700]:
-                    for command in COMMANDS[str(port)]:
-                        if isinstance(command, tuple):
-                            (method, args) = command
-                        else:
-                            (method, args) = (command, [])
-                        await self.jsonrpc_call_async(port, method, *args)
-                await asyncio.sleep(15)
-        task = await asyncio.create_task(poll_loop())
-        await self.port4400
-        await self.port4700
-        await self.images
-        await task
+        try:
+            logging.debug(">>>>>>>>>>>>>>>>>>> Getting filter wheel")
+            (self.wheel_names, position) = await asyncio.gather(
+                self.jsonrpc_call(4700, 'get_wheel_slot_name'),
+                self.jsonrpc_call(4700, 'get_wheel_position')
+            )
+            await self.update_q.put({'method': 'WheelName', 'code': 0, 'result': self.wheel_names[position]}),
+
+            async def poll_loop():
+                while True:
+                    for port in [4400, 4700]:
+                        for command in COMMANDS[str(port)]:
+                            (method, args) = command_args(command)
+                            await self.jsonrpc_call_async(port, method, *args)
+                    await asyncio.sleep(15)
+            logging.debug(">>>>>>>>>>>>>>>>>>> Polling")
+            asyncio.gather(poll_loop(), self.port4400, self.port4700, self.images)
+        except Exception as ex:
+            logging.error("Poll error %s", ex)
+
+    async def _handle_event(self, event, payload):
+        if event == "Exposure" and payload["state"] == "complete":
+            self.image_available.set()
+        if event == "WheelMove" and payload["state"] == "complete":
+            if self.wheel_names is None:
+                self.wheel_names = await self.jsonrpc_call(4700, 'get_wheel_slot_name')
+            asyncio.gather(
+                self.update_q.put({'method': 'WheelName', 'code': 0, 'result': self.wheel_names[payload["position"]]}),
+                self.update_q.put({'method': 'get_wheel_position', 'code': 0, 'result': payload["position"]})
+            )
+        elif event == "CameraControlChange":
+            for command in CAMERA_COMMANDS_4700:
+                (method, args) = command_args(command)
+                await self.jsonrpc_call_async(4700, method, *args)
+        elif event == "ScopeTrack":
+            await self.update_q.put({'method': 'scope_get_track_state', 'code': 0, 'result': payload["state"] == "on"})
+
 
     async def read_events(self, cmd_q, port: int):
         q = self.update_q
@@ -224,6 +258,12 @@ class ZwoAsiair(ObservatorySoftware):
                     event = event_map[message["id"]]
                     event.result = message["result"]
                     event.set()
+
+                # Handle any immediate routing/updates.
+                logging.debug("Received %s", message)
+                if "Event" in message:
+                    await self._handle_event(message["Event"], message)
+                # Send it to the legacy queue.
                 await q.put(message)
             except Exception as ex:
                 logging.error(ex)

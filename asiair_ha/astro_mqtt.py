@@ -22,13 +22,14 @@ async def main():
     asiair = ZwoAsiair.create('ASIAIR', address=asisair_host)
     await asiair.connect()
     # remove this interface
-    printer = await asyncio.create_task(mqtt_publisher(
-        asiair.update_q, asiair.image_available, asiair.cmd_q_4700,
+    logging.info(">>>>>>>> Starting publisher")
+    publisher = asyncio.create_task(mqtt_publisher(
+        asiair.update_q, asiair.cmd_q_4700,
         'asiair', mqtt_host, mqtt_port, mqtt_username, mqtt_password
         ))
+    logging.info(">>>>>>>> Discovering")
     await asiair.discover()
-    logging.info("Beginning polling loops...")
-    await asiair.poll()
-    await printer
+    logging.info(">>>>>>>> Beginning polling loops...")
+    await asyncio.gather(publisher, asiair.poll())
 
 asyncio.run(main())

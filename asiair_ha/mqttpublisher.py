@@ -12,10 +12,7 @@ def mqtt_publish(mqtt, root_topic, type, message):
     logging.debug(root_topic + " -> " + type + "->" + str(json.dumps(message)))
     y = mqtt.publish(root_topic + "/" + type, str(json.dumps(message)), retain=True)
 
-async def mqtt_publisher(q, image_available, cmd_q_4700, mqtt_root_topic, mqtt_host, mqtt_port, mqtt_username=None, mqtt_password=None):
-    # Cached values
-    wheel_names = None
-    pi_info = None
+async def mqtt_publisher(q, cmd_q_4700, mqtt_root_topic, mqtt_host, mqtt_port, mqtt_username=None, mqtt_password=None):
 
     def on_message(client, userdata, message: mqtt.MQTTMessage):
         cmd_q_4700: asyncio.Queue = userdata.get("cmd_q_4700", None)
@@ -49,52 +46,32 @@ async def mqtt_publisher(q, image_available, cmd_q_4700, mqtt_root_topic, mqtt_h
         logging.debug(e)
         raise
     while True:
-        message = await q.get()
-        if isinstance(message, bytearray):
-            mqttMsg = clientMQTT.publish("asiair/image/latestImage", message, qos=1, retain=True)
-            print("Waiting to publish image...")
-            mqttMsg.wait_for_publish()
-            print("... done")
-        else:
-            x = message
-            try:
-                message['utime'] = int(time.time())
+        try:
+            message = await q.get()
+            if isinstance(message, bytearray):
+                mqttMsg = clientMQTT.publish("asiair/image/latestImage", message, qos=1, retain=True)
+                print("Waiting to publish image...")
+                mqttMsg.wait_for_publish()
+                print("... done")
+            else:
+                x = message
                 try:
-                    if message["Event"] == "Exposure" and message["state"] == "complete":
-                        image_available.set()
-                except KeyError:
-                    pass
-                if "method" in message and message["code"] == 0:
-                    if message["method"] == "get_control_value":
-                        message["method"] = str(message["result"]["name"]).lower()
-                    if message["method"] == "pi_get_info":
-                        pi_info = message["result"] # Send HA device discovery message.
-                    elif message["method"] == "get_wheel_slot_name":
-                        wheel_names = message["result"] 
-                    elif message["method"] == "get_wheel_position":
-                        if wheel_names != None:
-                            mqtt_publish(clientMQTT, mqtt_root_topic, "WheelName", wheel_names[message["result"]])
-                elif "Event" in message:
-                    if message["Event"] == "WheelMove" and message["state"] == "complete":
-                        mqtt_publish(clientMQTT, mqtt_root_topic, "WheelName", wheel_names[message["position"]])
-                        mqtt_publish(clientMQTT, mqtt_root_topic, "get_wheel_position", message["position"])
-                    elif message["Event"] == "CameraControlChange":
-                        for command in CAMERA_COMMANDS_4700:
-                            await cmd_q_4700.put(command)
-                    elif message["Event"] == "ScopeTrack":
-                        mqtt_publish(clientMQTT, "scope_get_track_state", message["state"] == "on")
-                else:
-                    logging.error("Unknown response: %s", str(x))
+                    message['utime'] = int(time.time())
+                    if "method" in message and message["code"] == 0:
+                        if message["method"] == "get_control_value":
+                            message["method"] = str(message["result"]["name"]).lower()
 
-                if "Event" in message:
-                    mqtt_publish(clientMQTT, mqtt_root_topic, message["Event"], message)
-                elif "method" in message and message["code"] == 0:
-                    mqtt_publish(clientMQTT, mqtt_root_topic, message["method"], message["result"])
-                else:
-                    pass
-            except Exception as ex:
-                logging.debug("Failed: %s", ex)
-        q.task_done()
+                    if "Event" in message:
+                        mqtt_publish(clientMQTT, mqtt_root_topic, message["Event"], message)
+                    elif "method" in message and message["code"] == 0:
+                        mqtt_publish(clientMQTT, mqtt_root_topic, message["method"], message["result"])
+                    else:
+                        logging.error("Unknown response: %s", str(x))
+                except Exception as ex:
+                    logging.debug("Failed: %s", ex)
+            q.task_done()
+        except Exception as ex:
+            logging.error(">>>>>><<<<<<<< FAILED: %s", ex)
 
 async def create_mqtt_config(mqtt, sys_id, device_type, device_friendly_name, device_functions, cmd_q_4700: asyncio.Queue = None):
     """Creates configuration topics within the homeassistant sensor and camera topics.
