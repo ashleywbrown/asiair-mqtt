@@ -645,58 +645,6 @@ FUNCTIONS = {
         #    STATE_CLASS_MEASUREMENT,
         #],
     ),
-    DEVICE_TYPE_FOCUSER: (
-        [
-            TYPE_SENSOR,
-            "Position",
-            UNIT_OF_MEASUREMENT_NONE,
-            DEVICE_TYPE_FOCUSER_ICON,
-            DEVICE_CLASS_NONE,
-            STATE_CLASS_MEASUREMENT,
-            "asiair/get_focuser_position",
-            "{{ value_json }}"
-        ],
-#        [
-#            TYPE_BINARY_SENSOR,
-#            "Is moving",
-#            UNIT_OF_MEASUREMENT_NONE,
-#            DEVICE_TYPE_FOCUSER_ICON,
-#            DEVICE_CLASS_NONE,
-#            STATE_CLASS_NONE,
-#        ],
-    ),
-    DEVICE_TYPE_FILTERWHEEL: (
-        [
-            TYPE_SENSOR,
-            "Names",
-            UNIT_OF_MEASUREMENT_NONE,
-            DEVICE_TYPE_FILTERWHEEL_ICON,
-            DEVICE_CLASS_NONE,
-            STATE_CLASS_NONE,
-            "asiair/get_wheel_slot_name",
-            "{{ value_json }}"
-        ],
-        [
-            TYPE_SENSOR,
-            "Position",
-            UNIT_OF_MEASUREMENT_NONE,
-            DEVICE_TYPE_FILTERWHEEL_ICON,
-            DEVICE_CLASS_NONE,
-            STATE_CLASS_NONE,
-            "asiair/get_wheel_position",
-            "{{ value_json }}"
-        ],
-        [
-            TYPE_SENSOR,
-            "Current",
-            UNIT_OF_MEASUREMENT_NONE,
-            DEVICE_TYPE_FILTERWHEEL_ICON,
-            DEVICE_CLASS_NONE,
-            STATE_CLASS_NONE,
-            "asiair/WheelName",
-            "{{ value_json }}"
-        ],
-    ),
 #    DEVICE_TYPE_ROTATOR: (
 #        [
 #            TYPE_SENSOR,

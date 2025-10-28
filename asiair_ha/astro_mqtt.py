@@ -1,12 +1,14 @@
 import asyncio
 
+import inspect
 import json
 import sys
 import logging
 import paho.mqtt.client as mqtt
 
 from asiair import ZwoAsiair
-from mqttpublisher import mqtt_publisher
+from const import DEVICE_CLASS_NONE, STATE_CLASS_NONE, TYPE_SENSOR, UNIT_OF_MEASUREMENT_NONE
+from mqttpublisher import mqtt_publisher, sensor_publisher
 
 logging.basicConfig(#filename="./ASIAIR_"+str(sys.argv[2])+".log",
                     #filemode="a",
@@ -56,11 +58,41 @@ async def main():
         connections['asiair'].update_q,
         'asiair'))
     logging.info("Discovering devices...")
-    discovery = map(lambda cnx: cnx.discover(), connections.values())
-    await asyncio.gather(*discovery)
+
+    all_devices = []
+    for cnx_name, cnx in connections.items():
+        device_list = await cnx.discover()
+        for device in device_list:
+            all_devices.append((cnx_name, device))
+
+    for (cnx_name, device) in all_devices:
+        dv = device.get_mqtt_device_config()
+        discovery_topic = 'homeassistant/device/asiair/asiair/config' # remove hard coding
+        components = {}
+        for component_fn in device.components():
+            config = component_fn.component_config
+            state_topic = '{cnx_name}/{component_id}'.format(cnx_name=cnx_name, component_id=component_fn.component_id)
+            config['state_topic'] = state_topic
+            components[component_fn.component_id] = config
+            component_fn.set_on_publish(lambda component, payload, state_topic=state_topic: clientMQTT.publish(state_topic, payload, qos=1))
+
+        discovery_payload = {
+            'dev': dv,
+            'o': {
+                'name': 'AstroMQTT',
+                'sw_version': '0.1',
+                'support_url': 'https://github.com/ashleywbrown/asiair-mqtt',
+            },
+            'cmps': components,
+            'state_topic': 'asiair/pi_get_info', # Can add a better topic here.
+            
+        }
+        clientMQTT.publish(discovery_topic, json.dumps(discovery_payload), qos=0, retain=True)
+
     
-    polling = map(lambda cnx: cnx.poll(), connections.values())
-    logging.info("Starting...")
+    polling = list(map(lambda cnx: cnx.poll(), connections.values()))
+    logging.info("Starting... %d", len(polling))
+    await connections['asiair'].poll()
     await asyncio.gather(publisher, *polling)
 
 asyncio.run(main())

@@ -1,20 +1,29 @@
 import asyncio
 import struct
+import sys
 import tempfile
 import json, time
 import zipfile
 import paho.mqtt.client as mqtt
 import logging
+from components import sensor
 from astrolive.image import ImageManipulation
 from const import (
     CAMERA_SAMPLE_RESOLUTION,
+    DEVICE_CLASS_NONE,
+    DEVICE_TYPE_FILTERWHEEL_ICON,
+    DEVICE_TYPE_FOCUSER_ICON,
+    STATE_CLASS_NONE,
+    TYPE_SENSOR,
+    UNIT_OF_MEASUREMENT_NONE,
+    UNIT_OF_MEASUREMENT_TEMP_CELSIUS,
 )
 import jsonrpc
 
 
 import cv2
 import numpy as np
-from observatory_software import ObservatorySoftware
+from observatory_software import Device, ObservatorySoftware
 
 # Commands to interrogate the system:
 # https://www.cloudynights.com/topic/900861-seestar-s50asiair-jailbreak-ssh/page-4
@@ -48,12 +57,16 @@ TELESCOPE_COMMANDS_4400 = [
 TELESCOPE_COMMANDS_4700 = [
     "get_focal_length",
 ]
-FOCUSER_COMMANDS_4700 = ["get_focuser_state", "get_focuser_caps", "get_focuser_value", "get_focuser_position"]
+FOCUSER_COMMANDS_4700 = [
+    "get_focuser_state",
+    "get_focuser_caps",
+    "get_focuser_value",
+    "get_focuser_position"]
 PI_STATUS_COMMANDS_4700 = [
     "pi_station_state",
-    "pi_is_verified",
+    #"pi_is_verified",
     "get_app_state", # Returns everything needed to configure the UI, including active page
-    "pi_get_time",
+    #"pi_get_time",
     "pi_get_info",
     "pi_get_ap",
     "get_power_supply",
@@ -129,6 +142,9 @@ def command_args(command):
         (method, args) = (command, [])
     return (method, args)
 
+class FromJson:
+    def __init__(self, json_dict):
+        self.__dict__ = json_dict
 
 class ZwoAsiair(ObservatorySoftware):
 
@@ -139,6 +155,11 @@ class ZwoAsiair(ObservatorySoftware):
         # Cache some information - factor this out to device later.
         self.wheel_names = None
         self.pi_info = None
+        self.devices = [
+            ZwoAsiairDevice(self),
+            Focuser(self),
+            FilterWheel(self),
+        ]
         super().__init__(name)
 
     @staticmethod
@@ -177,8 +198,9 @@ class ZwoAsiair(ObservatorySoftware):
         return event.result
 
     async def discover(self):
-        self.pi_info = await self.jsonrpc_call(4700, 'pi_get_info')
+        self.pi_info = FromJson(await self.jsonrpc_call(4700, 'pi_get_info'))
         logging.debug(self.pi_info)
+        return self.devices
   
     async def poll(self):
         try:
@@ -187,15 +209,26 @@ class ZwoAsiair(ObservatorySoftware):
                 self.jsonrpc_call(4700, 'get_wheel_slot_name'),
                 self.jsonrpc_call(4700, 'get_wheel_position')
             )
-            await self.update_q.put({'method': 'WheelName', 'code': 0, 'result': self.wheel_names[position]}),
+            if len(self.wheel_names) > 0:
+                await self.update_q.put({'method': 'WheelName', 'code': 0, 'result': self.wheel_names[position]}),
 
             async def poll_loop():
                 while True:
-                    for port in [4400, 4700]:
-                        for command in COMMANDS[str(port)]:
-                            (method, args) = command_args(command)
-                            await self.jsonrpc_call_async(port, method, *args)
-                    await asyncio.sleep(15)
+                    # Publish all components.
+                    try:
+                        for device in self.devices:
+                            for component in device.components():
+                                logging.debug(component)
+                                await component.publish(device)
+
+                        for port in [4400, 4700]:
+                            for command in COMMANDS[str(port)]:
+                                (method, args) = command_args(command)
+                                await self.jsonrpc_call_async(port, method, *args)
+                        await asyncio.sleep(15)
+                    except Exception as ex:
+                        logging.error(ex)
+                        sys.exit(0)
             logging.debug(">>>>>>>>>>>>>>>>>>> Polling")
             asyncio.gather(poll_loop(), self.port4400, self.port4700, self.images)
         except Exception as ex:
@@ -326,3 +359,95 @@ class ZwoAsiair(ObservatorySoftware):
                         print(str(port) + " => " + str(header))
             except Exception as ex:
                 logging.error(ex)
+
+class ZwoAsiairDevice(Device):
+    """ The ASIAIR itself. """
+    def __init__(self, parent: ZwoAsiair):
+        super().__init__(parent)
+
+    def get_mqtt_device_config(self):
+        pi_info = self.parent.pi_info
+        return {
+            'name': 'ZWO ASIAIR',
+            'manufacturer': 'Suzhou ZWO Co., Ltd',
+            'model': pi_info.model,
+            'serial_number': pi_info.guid,
+            'identifiers': [pi_info.guid, pi_info.cpuId],
+            'suggested_area': 'Observatory',
+            'sw_version': pi_info.uname,
+        }
+    
+    @sensor(
+        name="CPU ID",
+        unit_of_measurement=UNIT_OF_MEASUREMENT_NONE,
+        icon="mdi:raspberry-pi",
+        unique_id='1235qwv45h4'
+    ) 
+    async def cpuid(self):
+        return self.parent.pi_info.cpuId
+    
+    @sensor(
+        name="CPU Temperature",
+        unit_of_measurement=UNIT_OF_MEASUREMENT_TEMP_CELSIUS,
+        icon="mdi:thermometer",
+        unique_id='1235qwv45h6'
+    ) 
+    async def cpu_temp(self):
+        self.parent.pi_info = FromJson(await self.parent.jsonrpc_call(4700, 'pi_get_info'))
+        return self.parent.pi_info.temp
+
+class Focuser(Device):
+    """ The ASIAIR itself. """
+    def __init__(self, parent: ZwoAsiair):
+        super().__init__(parent)
+
+    def get_mqtt_device_config(self):
+        pi_info = self.parent.pi_info
+        return {
+            'name': 'ZWO ASIAIR - Focuser',
+            'model': 'Focuser',
+            'manufacturer': 'Suzhou ZWO Co., Ltd',
+            'identifiers': [pi_info.guid + '_focuser'],
+            'suggested_area': 'Observatory',
+        }
+    
+    @sensor(
+        name="Position",
+        unit_of_measurement=UNIT_OF_MEASUREMENT_NONE,
+        icon=DEVICE_TYPE_FOCUSER_ICON,
+        unique_id='1236qw245h6'
+    ) 
+    async def position(self):
+        return await self.parent.jsonrpc_call(4700, 'get_focuser_position')
+
+class FilterWheel(Device):
+    """ The ASIAIR itself. """
+    def __init__(self, parent: ZwoAsiair):
+        self.wheel_names = []
+        super().__init__(parent)
+
+    def get_mqtt_device_config(self):
+        pi_info = self.parent.pi_info
+        return {
+            'name': 'ZWO ASIAIR - Filter Wheel',
+            'model': 'Filter Wheel',
+            'manufacturer': 'Suzhou ZWO Co., Ltd',
+            'identifiers': [pi_info.guid + '_efw'],
+            'suggested_area': 'Observatory',
+        }
+    
+    @sensor(
+        name="Current",
+        unit_of_measurement=UNIT_OF_MEASUREMENT_NONE,
+        icon=DEVICE_TYPE_FILTERWHEEL_ICON,
+        unique_id='1236qw345h6'
+    ) 
+    async def current(self):
+        (self.wheel_names, position) = await asyncio.gather(
+            self.parent.jsonrpc_call(4700, 'get_wheel_slot_name'),
+            self.parent.jsonrpc_call(4700, 'get_wheel_position')
+        )
+        if len(self.wheel_names) > 0:
+            return self.wheel_names[position]
+        else:
+            return None

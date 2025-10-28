@@ -17,8 +17,6 @@ async def mqtt_publisher(clientMQTT, q, mqtt_root_topic):
     try:
         asyncio.create_task(create_mqtt_config(clientMQTT, "asiair.asiair", DEVICE_TYPE_ASIAIR, "ASIAIR", FUNCTIONS[DEVICE_TYPE_ASIAIR]))
         asyncio.create_task(create_mqtt_config(clientMQTT, "asiair.camera", DEVICE_TYPE_CAMERA, "Camera", FUNCTIONS[DEVICE_TYPE_CAMERA]))
-        asyncio.create_task(create_mqtt_config(clientMQTT, "asiair.filterwheel", DEVICE_TYPE_FILTERWHEEL, "FilterWheel", FUNCTIONS[DEVICE_TYPE_FILTERWHEEL]))
-        asyncio.create_task(create_mqtt_config(clientMQTT, "asiair.focuser", DEVICE_TYPE_FOCUSER, "Focuser", FUNCTIONS[DEVICE_TYPE_FOCUSER]))
         asyncio.create_task(create_mqtt_config(clientMQTT, "asiair.telescope", DEVICE_TYPE_TELESCOPE, "Telescope", FUNCTIONS[DEVICE_TYPE_TELESCOPE]))
     except Exception as e:
         logging.debug(e)
@@ -50,6 +48,15 @@ async def mqtt_publisher(clientMQTT, q, mqtt_root_topic):
             q.task_done()
         except Exception as ex:
             logging.error(">>>>>><<<<<<<< FAILED: %s", ex)
+
+async def sensor_publisher(clientMQTT, sensors):
+    while True:
+        for (topic, device, method) in sensors:
+            payload = await method()
+            logging.debug('Publishing %s => %s', topic, payload)
+            clientMQTT.publish(topic, payload, qos=1)
+        await asyncio.sleep(20)
+
 
 async def create_mqtt_config(mqtt, sys_id, device_type, device_friendly_name, device_functions):
     """Creates configuration topics within the homeassistant sensor and camera topics.

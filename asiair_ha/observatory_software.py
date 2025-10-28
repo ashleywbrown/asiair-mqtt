@@ -52,3 +52,20 @@ class ObservatorySoftware:
     @staticmethod
     def create(name: str, **kwargs):
         raise NotImplementedError
+
+class Device:
+    """ Root device class which handles MQTT sensor mapping + HA discovery. """
+    def __init__(self, parent: ObservatorySoftware):
+        self.parent = parent
+        super().__init__()
+
+    def components(self):
+        components = []
+        for attr_name in dir(self):
+            method = getattr(self, attr_name)
+            if hasattr(method, 'component_config'):
+                components.append(method)
+        return components
+
+    def get_mqtt_device_config():
+        raise NotImplementedError
