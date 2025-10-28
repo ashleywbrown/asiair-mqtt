@@ -30,7 +30,6 @@ async def main():
         # creates messy logs which are hard to debug.
         logging.info('Opening connections for "%s"', name)
         await cnx.connect()
-    # remove this interface
 
     # Setup MQTT.
     def on_message(client, connections, message: mqtt.MQTTMessage):
