@@ -695,7 +695,6 @@ FUNCTIONS = {
             STATE_CLASS_NONE,
             "asiair/WheelName",
             "{{ value_json }}"
-
         ],
     ),
 #    DEVICE_TYPE_ROTATOR: (

@@ -12,33 +12,11 @@ def mqtt_publish(mqtt, root_topic, type, message):
     logging.debug(root_topic + " -> " + type + "->" + str(json.dumps(message)))
     y = mqtt.publish(root_topic + "/" + type, str(json.dumps(message)), retain=True)
 
-async def mqtt_publisher(q, cmd_q_4700, mqtt_root_topic, mqtt_host, mqtt_port, mqtt_username=None, mqtt_password=None):
-
-    def on_message(client, userdata, message: mqtt.MQTTMessage):
-        cmd_q_4700: asyncio.Queue = userdata.get("cmd_q_4700", None)
-        if (cmd_q_4700):
-            logging.debug(">>>>>>>>>>> %s: %s", message.topic, message.payload)
-            if message.topic == "asiair/set_control_value/cmd":
-                cmd_q_4700.put_nowait(("set_control_value", json.loads(message.payload)))
-        #logging.info(message)
-
-    userdata = {
-        "cmd_q_4700": cmd_q_4700,
-    }
-
-    # setup
-    print("connecting MQTT: " + str(mqtt_host) + ':' + str(mqtt_port))
-    clientMQTT = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2, userdata=userdata)
-    if mqtt_username and mqtt_password:
-        clientMQTT.username_pw_set(username=mqtt_username, password=mqtt_password)
-    clientMQTT.connect(mqtt_host, mqtt_port, 60)
-    clientMQTT.on_message = on_message
-    clientMQTT.loop_start()
-
+async def mqtt_publisher(clientMQTT, q, mqtt_root_topic):
     # Set up MQTT Home Assistant config.
     try:
         asyncio.create_task(create_mqtt_config(clientMQTT, "asiair.asiair", DEVICE_TYPE_ASIAIR, "ASIAIR", FUNCTIONS[DEVICE_TYPE_ASIAIR]))
-        asyncio.create_task(create_mqtt_config(clientMQTT, "asiair.camera", DEVICE_TYPE_CAMERA, "Camera", FUNCTIONS[DEVICE_TYPE_CAMERA], cmd_q_4700))
+        asyncio.create_task(create_mqtt_config(clientMQTT, "asiair.camera", DEVICE_TYPE_CAMERA, "Camera", FUNCTIONS[DEVICE_TYPE_CAMERA]))
         asyncio.create_task(create_mqtt_config(clientMQTT, "asiair.filterwheel", DEVICE_TYPE_FILTERWHEEL, "FilterWheel", FUNCTIONS[DEVICE_TYPE_FILTERWHEEL]))
         asyncio.create_task(create_mqtt_config(clientMQTT, "asiair.focuser", DEVICE_TYPE_FOCUSER, "Focuser", FUNCTIONS[DEVICE_TYPE_FOCUSER]))
         asyncio.create_task(create_mqtt_config(clientMQTT, "asiair.telescope", DEVICE_TYPE_TELESCOPE, "Telescope", FUNCTIONS[DEVICE_TYPE_TELESCOPE]))
@@ -73,7 +51,7 @@ async def mqtt_publisher(q, cmd_q_4700, mqtt_root_topic, mqtt_host, mqtt_port, m
         except Exception as ex:
             logging.error(">>>>>><<<<<<<< FAILED: %s", ex)
 
-async def create_mqtt_config(mqtt, sys_id, device_type, device_friendly_name, device_functions, cmd_q_4700: asyncio.Queue = None):
+async def create_mqtt_config(mqtt, sys_id, device_type, device_friendly_name, device_functions):
     """Creates configuration topics within the homeassistant sensor and camera topics.
 
     Args:
@@ -147,14 +125,14 @@ async def create_mqtt_config(mqtt, sys_id, device_type, device_friendly_name, de
             config["current_temperature_template"] = "{{ value_json.value }}"
             config["temperature_state_topic"] = "asiair/targettemp"
             config["temperature_state_template"] = "{{ value_json.value }}"
-            if cmd_q_4700 is not None:
-                config["temperature_command_topic"] = "asiair/set_control_value/cmd"
-                config["temperature_command_template"] = "[\"TargetTemp\", {{ value }}]"
 
-                config["mode_command_topic"] = "asiair/set_control_value/cmd"
-                config["mode_command_template"] = "[\"CoolerOn\", {% if value == 'off' %}0{% else %}1{% endif %}]"
+            config["temperature_command_topic"] = "asiair/set_control_value/cmd"
+            config["temperature_command_template"] = "[\"TargetTemp\", {{ value }}]"
 
-                mqtt.subscribe("asiair/set_control_value/cmd")
+            config["mode_command_topic"] = "asiair/set_control_value/cmd"
+            config["mode_command_template"] = "[\"CoolerOn\", {% if value == 'off' %}0{% else %}1{% endif %}]"
+
+            mqtt.subscribe("asiair/set_control_value/cmd")
 
         #if function[SENSOR_TYPE] == TYPE_TEXT:
         #    config["command_topic"] = ("astrolive/" + device_type + "/" + sys_id_ + "/cmd",)
