@@ -1,9 +1,9 @@
 import logging
-from const import TYPE_SENSOR
+from const import TYPE_SENSOR, TYPE_SWITCH
 
 
-def sensor(**kwargs):
-    def sensor(func):
+def component(platform=TYPE_SENSOR, **kwargs):
+    def component(func):
         def get_wrapper(self, *args, **kwargs):
             return func(self, *args, **kwargs)
         
@@ -24,6 +24,21 @@ def sensor(**kwargs):
 
         get_wrapper.component_id = func.__name__
         get_wrapper.component_config = kwargs
-        get_wrapper.component_config['platform'] = TYPE_SENSOR
+        get_wrapper.component_config['platform'] = platform
         return get_wrapper
-    return sensor
+    return component
+
+def sensor(**kwargs):
+    return component(platform=TYPE_SENSOR, **kwargs)
+
+def switch(**kwargs):
+    def switch(func):
+        get_wrapper = component(platform=TYPE_SWITCH, **kwargs)(func)
+        get_wrapper.setfn = None
+        def setter(func):
+            get_wrapper.setfn = func
+        get_wrapper.setter = setter
+        return get_wrapper
+
+    return switch
+

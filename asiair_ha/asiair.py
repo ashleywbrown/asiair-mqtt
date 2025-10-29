@@ -6,7 +6,7 @@ import json, time
 import zipfile
 import paho.mqtt.client as mqtt
 import logging
-from components import sensor
+from components import sensor, switch
 from astrolive.image import ImageManipulation
 from const import (
     CAMERA_SAMPLE_RESOLUTION,
@@ -53,7 +53,7 @@ CAMERA_COMMANDS_4700 = [
     ("get_control_value", ["CoolerOn"]),
  #   ("get_control_value", ["CoolPowerPerc"]),
     ("get_control_value", ["TargetTemp"]),
-    ("get_control_value", ["AntiDewHeater"]),
+ #   ("get_control_value", ["AntiDewHeater"]),
 #    ("get_control_value", ["Exposure"]),
     ]
 SEQUENCE_COMMANDS_4700 = ["get_sequence", "get_sequence_number", "get_sequence_setting"]
@@ -161,12 +161,12 @@ class ZwoAsiair(ObservatorySoftware):
         # Cache some information - factor this out to device later.
         self.wheel_names = None
         self.pi_info = None
-        self.devices = [
-            ZwoAsiairDevice(self),
-            Focuser(self),
-            FilterWheel(self),
-            Camera(self),
-        ]
+        self.devices = {
+            'asiair': ZwoAsiairDevice(self, 'asiair'),
+            'focuser': Focuser(self, 'focuser'),
+            'efw': FilterWheel(self, 'efw'),
+            'camera': Camera(self, 'camera'),
+        }
         super().__init__(name)
 
     @staticmethod
@@ -177,6 +177,8 @@ class ZwoAsiair(ObservatorySoftware):
         self.update_q = asyncio.Queue()
         self.cmd_q_4400 = asyncio.Queue()
         self.cmd_q_4700 = asyncio.Queue()
+        # Used to publish outside of the main event loop.
+        self.cmd_scheduler_q = asyncio.Queue()
         self.image_available = asyncio.Event()
         self.port4400 = asyncio.create_task(self.read_events(self.cmd_q_4400, 4400))
         self.port4700 = asyncio.create_task(self.read_events(self.cmd_q_4700, 4700))
@@ -222,12 +224,23 @@ class ZwoAsiair(ObservatorySoftware):
             )
             if len(self.wheel_names) > 0:
                 await self.update_q.put({'method': 'WheelName', 'code': 0, 'result': self.wheel_names[position]}),
+            
+            async def cmd_loop():
+                while True:
+                    # Publish all components.
+                    try:
+                        cmd = await self.cmd_scheduler_q.get()
+                        await cmd()
+                    except Exception as ex:
+                        logging.error(ex)
+                        sys.exit(0)
+                
 
             async def poll_loop():
                 while True:
                     # Publish all components.
                     try:
-                        for device in self.devices:
+                        for device in self.devices.values():
                             for component in device.components():
                                 logging.debug(component)
                                 await component.publish(device)
@@ -241,7 +254,7 @@ class ZwoAsiair(ObservatorySoftware):
                         logging.error(ex)
                         sys.exit(0)
             logging.debug(">>>>>>>>>>>>>>>>>>> Polling")
-            asyncio.gather(poll_loop(), self.port4400, self.port4700, self.images)
+            asyncio.gather(poll_loop(), cmd_loop(), self.port4400, self.port4700, self.images)
         except Exception as ex:
             logging.error("Poll error %s", ex)
 
@@ -256,6 +269,18 @@ class ZwoAsiair(ObservatorySoftware):
                 self.update_q.put({'method': 'get_wheel_position', 'code': 0, 'result': payload["position"]})
             )
         elif event == "CameraControlChange":
+            camera = self.devices['camera']
+            logging.debug('CameraControlChange - publishing updates.')
+            for component in [camera.gain, camera.exposure_seconds, camera.cooler_power, camera.dewheater]:
+                logging.debug('  %s %s', component, component.component_id)
+                try:
+                    self.cmd_scheduler_q.put_nowait(
+                        lambda component=component, camera=camera: component.publish(camera))
+                except Exception as ex:
+                    logging.debug('exception %s', ex)
+                logging.debug('complete')
+
+
             for command in CAMERA_COMMANDS_4700:
                 (method, args) = command_args(command)
                 await self.jsonrpc_call_async(4700, method, *args)
@@ -308,9 +333,13 @@ class ZwoAsiair(ObservatorySoftware):
                     event.set()
 
                 # Handle any immediate routing/updates.
-                logging.debug("Received %s", message)
+                #logging.debug("Received %s", message)
                 if "Event" in message:
-                    await self._handle_event(message["Event"], message)
+                    try:
+                        await self._handle_event(message["Event"], message)
+                    except Exception as ex:
+                        logging.debug(ex)
+                        sys.exit(1)
                 # Send it to the legacy queue.
                 await q.put(message)
             except Exception as ex:
@@ -369,8 +398,8 @@ class ZwoAsiair(ObservatorySoftware):
 
 class ZwoAsiairDevice(Device):
     """ The ASIAIR itself. """
-    def __init__(self, parent: ZwoAsiair):
-        super().__init__(parent)
+    def __init__(self, parent: ZwoAsiair, name):
+        super().__init__(parent, name)
 
     def get_mqtt_device_config(self):
         pi_info = self.parent.pi_info
@@ -405,8 +434,8 @@ class ZwoAsiairDevice(Device):
 
 class Focuser(Device):
     """ The ASIAIR itself. """
-    def __init__(self, parent: ZwoAsiair):
-        super().__init__(parent)
+    def __init__(self, parent: ZwoAsiair, name):
+        super().__init__(parent, name)
 
     def get_mqtt_device_config(self):
         pi_info = self.parent.pi_info
@@ -429,9 +458,9 @@ class Focuser(Device):
 
 class FilterWheel(Device):
     """ The ASIAIR filter wheel. """
-    def __init__(self, parent: ZwoAsiair):
+    def __init__(self, parent: ZwoAsiair, name):
         self.wheel_names = []
-        super().__init__(parent)
+        super().__init__(parent, name)
 
     def get_mqtt_device_config(self):
         pi_info = self.parent.pi_info
@@ -461,8 +490,8 @@ class FilterWheel(Device):
 
 class Camera(Device):
     """ The ASIAIR camera. """
-    def __init__(self, parent: ZwoAsiair):
-        super().__init__(parent)
+    def __init__(self, parent: ZwoAsiair, name):
+        super().__init__(parent, name)
 
     def get_mqtt_device_config(self):
         pi_info = self.parent.pi_info
@@ -526,6 +555,28 @@ class Camera(Device):
     ) 
     async def exposure_seconds(self):
         return (await self.parent.jsonrpc_call(4700, 'get_control_value', 'Exposure'))['value'] / (1000*1000)
+
+    @switch(
+        name='Dew Heater',
+        unit_of_measurement=UNIT_OF_MEASUREMENT_NONE,
+        icon='mdi:heating-coil',
+        device_class=DEVICE_CLASS_SWITCH,
+        state_class=STATE_CLASS_NONE,
+        unique_id='awe4t4ats-6',
+        value_template='{% if value_json == 0 %}OFF{% else %}ON{% endif %}',
+        command_template='{% if value == "ON" %}1{% else %}0{% endif %}'
+    ) 
+    async def dewheater(self):
+        return (await self.parent.jsonrpc_call(4700, 'get_control_value', 'AntiDewHeater'))['value']
+
+    @dewheater.setter
+    async def set_dewheater(self, value):
+        error_code = await self.parent.jsonrpc_call(4700, 'set_control_value', 'AntiDewHeater', value)
+        if error_code == 0:
+            return value # return the latest value for publication.
+        else:
+            raise RuntimeError("Non-zero exit code for " + function.__name__)
+
 
 nothing = [
 #        [

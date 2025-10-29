@@ -55,8 +55,9 @@ class ObservatorySoftware:
 
 class Device:
     """ Root device class which handles MQTT sensor mapping + HA discovery. """
-    def __init__(self, parent: ObservatorySoftware):
+    def __init__(self, parent: ObservatorySoftware, name: str):
         self.parent = parent
+        self.name = name
         super().__init__()
 
     def components(self):

@@ -7,7 +7,7 @@ import logging
 import paho.mqtt.client as mqtt
 
 from asiair import ZwoAsiair
-from const import DEVICE_CLASS_NONE, STATE_CLASS_NONE, TYPE_SENSOR, UNIT_OF_MEASUREMENT_NONE
+from const import DEVICE_CLASS_NONE, STATE_CLASS_NONE, TYPE_SENSOR, TYPE_SWITCH, UNIT_OF_MEASUREMENT_NONE
 from mqttpublisher import mqtt_publisher, sensor_publisher
 
 logging.basicConfig(#filename="./ASIAIR_"+str(sys.argv[2])+".log",
@@ -23,7 +23,18 @@ mqtt_port     = int(sys.argv[3])
 mqtt_username     = str(sys.argv[4])
 mqtt_password     = str(sys.argv[5])
 
+async def command_router(cmd_q: asyncio.Queue):
+    while True:
+        try:
+            (component, device, payload) = await cmd_q.get()
+            new_value = await component.setfn(device, json.loads(payload))
+            if new_value is not None:
+                component.on_publish(component, new_value)
+        except Exception as ex:
+            logging.error(ex)
+
 async def main():
+    cmd_q = asyncio.Queue()
     connections = {
         'asiair': ZwoAsiair.create('ASIAIR', address=asiair_host)
     }
@@ -62,7 +73,7 @@ async def main():
     all_devices = []
     for cnx_name, cnx in connections.items():
         device_list = await cnx.discover()
-        for device in device_list:
+        for device in device_list.values():
             all_devices.append((cnx_name, device))
 
     for (cnx_name, device) in all_devices:
@@ -71,11 +82,23 @@ async def main():
         components = {}
         for component_fn in device.components():
             config = component_fn.component_config
-            state_topic = '{cnx_name}/{component_id}'.format(cnx_name=cnx_name, component_id=component_fn.component_id)
+            state_topic = '{cnx_name}/{device_name}/{component_id}'.format(cnx_name=cnx_name, device_name=device.name, component_id=component_fn.component_id)
             config['state_topic'] = state_topic
+
+            if config['platform'] in [TYPE_SWITCH]:
+                command_topic = '{state_topic}/set'.format(state_topic=state_topic)
+                config['command_topic'] = command_topic
+                clientMQTT.subscribe(command_topic)
+
+                clientMQTT.message_callback_add(
+                    command_topic,
+                    lambda client, userdata, message, device=device, component_fn=component_fn, cmd_q=cmd_q: cmd_q.put_nowait((component_fn, device, message.payload)))
+
+            
             components[component_fn.component_id] = config
             component_fn.set_on_publish(lambda component, payload, state_topic=state_topic: clientMQTT.publish(state_topic, payload, qos=1))
-
+        logging.debug(' Registering components %s', components)
+        
         discovery_payload = {
             'dev': dv,
             'o': {
@@ -88,11 +111,10 @@ async def main():
             
         }
         clientMQTT.publish(discovery_topic, json.dumps(discovery_payload), qos=0, retain=True)
-
     
     polling = list(map(lambda cnx: cnx.poll(), connections.values()))
     logging.info("Starting... %d", len(polling))
     await connections['asiair'].poll()
-    await asyncio.gather(publisher, *polling)
+    await asyncio.gather(command_router(cmd_q), publisher, *polling)
 
 asyncio.run(main())

@@ -520,16 +520,6 @@ FUNCTIONS = {
             "asiair/cooleron",
             "{% if value_json.value == 0 %}OFF{% else %}ON{% endif %}"
         ],
-        [
-            TYPE_SWITCH,
-            "Dew Heater on",
-            UNIT_OF_MEASUREMENT_NONE,
-            "mdi:heating-coil",
-            DEVICE_CLASS_SWITCH,
-            STATE_CLASS_NONE,
-            "asiair/antidewheater",
-            "{% if value_json.value == 0 %}OFF{% else %}ON{% endif %}"
-        ],
         #[
         #    TYPE_SENSOR,
         #    "Image array",
