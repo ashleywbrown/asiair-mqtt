@@ -492,26 +492,6 @@ FUNCTIONS = {
     DEVICE_TYPE_CAMERA: (
         [
             TYPE_SENSOR,
-            "Name",
-            UNIT_OF_MEASUREMENT_NONE,
-            DEVICE_TYPE_CAMERA_ICON,
-            DEVICE_CLASS_NONE,
-            STATE_CLASS_NONE,
-            "asiair/get_camera_state",
-            "{{ value_json.name }}"
-        ],
-        [
-            TYPE_SENSOR,
-            "Camera state",
-            UNIT_OF_MEASUREMENT_NONE,
-            DEVICE_TYPE_CAMERA_ICON,
-            DEVICE_CLASS_NONE,
-            STATE_CLASS_NONE,
-            "asiair/get_camera_state",
-            "{{ value_json.state }}"
-        ],
-        [
-            TYPE_SENSOR,
             "CCD temperature",
             UNIT_OF_MEASUREMENT_TEMP_CELSIUS,
             DEVICE_TYPE_CAMERA_ICON,
@@ -539,36 +519,6 @@ FUNCTIONS = {
             STATE_CLASS_NONE,
             "asiair/cooleron",
             "{% if value_json.value == 0 %}OFF{% else %}ON{% endif %}"
-        ],
-        [
-            TYPE_SENSOR,
-            "Cooler Power",
-            UNIT_OF_MEASUREMENT_PERCENTAGE,
-            DEVICE_TYPE_CAMERA_ICON,
-            DEVICE_CLASS_NONE,
-            STATE_CLASS_MEASUREMENT,
-            "asiair/coolpowerperc",
-            "{{ value_json.value }}"
-        ],
-        [
-            TYPE_SENSOR,
-            "Gain",
-            UNIT_OF_MEASUREMENT_NONE,
-            DEVICE_TYPE_CAMERA_ICON,
-            DEVICE_CLASS_NONE,
-            STATE_CLASS_MEASUREMENT,
-            "asiair/gain",
-            "{{ value_json.value }}"
-        ],
-        [
-            TYPE_SENSOR,
-            "Exposure",
-            UNIT_OF_MEASUREMENT_SECONDS,
-            DEVICE_TYPE_CAMERA_ICON,
-            DEVICE_CLASS_NONE,
-            STATE_CLASS_MEASUREMENT,
-            "asiair/exposure",
-            "{{ value_json.value / (1000*1000) }}"
         ],
         [
             TYPE_SWITCH,

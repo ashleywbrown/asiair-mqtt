@@ -11,11 +11,17 @@ from astrolive.image import ImageManipulation
 from const import (
     CAMERA_SAMPLE_RESOLUTION,
     DEVICE_CLASS_NONE,
+    DEVICE_CLASS_SWITCH,
+    DEVICE_TYPE_CAMERA_ICON,
     DEVICE_TYPE_FILTERWHEEL_ICON,
     DEVICE_TYPE_FOCUSER_ICON,
+    STATE_CLASS_MEASUREMENT,
     STATE_CLASS_NONE,
     TYPE_SENSOR,
+    TYPE_SWITCH,
     UNIT_OF_MEASUREMENT_NONE,
+    UNIT_OF_MEASUREMENT_PERCENTAGE,
+    UNIT_OF_MEASUREMENT_SECONDS,
     UNIT_OF_MEASUREMENT_TEMP_CELSIUS,
 )
 import jsonrpc
@@ -43,12 +49,12 @@ CAMERA_COMMANDS_4700 = [
     "get_camera_info", # camera capabilities - pixel size, dimensions, cooling etc
     "get_camera_exp_and_bin",
     "get_subframe",
-    ("get_control_value", ["Gain"]),
+ #   ("get_control_value", ["Gain"]),
     ("get_control_value", ["CoolerOn"]),
-    ("get_control_value", ["CoolPowerPerc"]),
+ #   ("get_control_value", ["CoolPowerPerc"]),
     ("get_control_value", ["TargetTemp"]),
     ("get_control_value", ["AntiDewHeater"]),
-    ("get_control_value", ["Exposure"]),
+#    ("get_control_value", ["Exposure"]),
     ]
 SEQUENCE_COMMANDS_4700 = ["get_sequence", "get_sequence_number", "get_sequence_setting"]
 TELESCOPE_COMMANDS_4400 = [
@@ -159,6 +165,7 @@ class ZwoAsiair(ObservatorySoftware):
             ZwoAsiairDevice(self),
             Focuser(self),
             FilterWheel(self),
+            Camera(self),
         ]
         super().__init__(name)
 
@@ -195,7 +202,11 @@ class ZwoAsiair(ObservatorySoftware):
         await cmd_q.put((command, args, event))
         # would be better as a single-item queue
         await event.wait()
-        return event.result
+        if event.result is not None:
+            return event.result
+        else:
+            logging.error('Error during synchronous call: %s', event.error)
+            sys.exit(0)
 
     async def discover(self):
         self.pi_info = FromJson(await self.jsonrpc_call(4700, 'pi_get_info'))
@@ -225,7 +236,7 @@ class ZwoAsiair(ObservatorySoftware):
                             for command in COMMANDS[str(port)]:
                                 (method, args) = command_args(command)
                                 await self.jsonrpc_call_async(port, method, *args)
-                        await asyncio.sleep(15)
+                        await asyncio.sleep(45)
                     except Exception as ex:
                         logging.error(ex)
                         sys.exit(0)
@@ -289,7 +300,11 @@ class ZwoAsiair(ObservatorySoftware):
                 if "method" in message and message["id"] in event_map:
                     logging.debug("Reponse to message %d", message["id"])
                     event = event_map[message["id"]]
-                    event.result = message["result"]
+                    try:
+                        event.result = message["result"]
+                    except KeyError as ke:
+                        event.result = None
+                        event.error = message.get("error", None)
                     event.set()
 
                 # Handle any immediate routing/updates.
@@ -338,18 +353,10 @@ class ZwoAsiair(ObservatorySoftware):
                             f.seek(0)
                             z = zipfile.ZipFile(f)
                             with z.open("raw_data", mode="r") as rawData:
-                                rawImage = np.ndarray(shape=(height, width), dtype=">u2", buffer=rawData.read())
-                                print(rawImage.dtype)
-                                cv2.imwrite("raw-asiair.png", rawImage)
+                                rawImage = np.ndarray(shape=(height, width), dtype="<u2", buffer=rawData.read())
                                 imageData = await ImageManipulation.normalize_image(rawImage)
-                                print(imageData.dtype)
-                                cv2.imwrite("norm-asiair.png", (np.multiply(imageData, 2**CAMERA_SAMPLE_RESOLUTION)).astype(np.uint8))
                                 imageData = await ImageManipulation.compute_astropy_stretch(imageData)
-                                print(imageData.dtype)
-                                #imageData *= 255
-                                print("Pre resize range: "+ str(np.min(imageData)) + "-" +  str(np.max(imageData)))
-                                imageData = await ImageManipulation.resize_image(imageData)#resize_image(np.multiply(imageData, 2**CAMERA_SAMPLE_RESOLUTION)) #.astype(np.uint8)
-                                cv2.imwrite("stretch-asiair.png", imageData)
+                                imageData = await ImageManipulation.resize_image(imageData)
                                 (result, imageData) = cv2.imencode(".png", imageData)
                                 byteArray = bytearray(imageData)
                                 print("MQTT publish result: " + str(result) + "; Len: " + str(len(byteArray)))
@@ -421,7 +428,7 @@ class Focuser(Device):
         return await self.parent.jsonrpc_call(4700, 'get_focuser_position')
 
 class FilterWheel(Device):
-    """ The ASIAIR itself. """
+    """ The ASIAIR filter wheel. """
     def __init__(self, parent: ZwoAsiair):
         self.wheel_names = []
         super().__init__(parent)
@@ -451,3 +458,114 @@ class FilterWheel(Device):
             return self.wheel_names[position]
         else:
             return None
+
+class Camera(Device):
+    """ The ASIAIR camera. """
+    def __init__(self, parent: ZwoAsiair):
+        super().__init__(parent)
+
+    def get_mqtt_device_config(self):
+        pi_info = self.parent.pi_info
+        return {
+            'name': 'ZWO ASIAIR - Camera',
+            'model': 'Camera',
+            'manufacturer': 'Suzhou ZWO Co., Ltd',
+            'identifiers': [pi_info.guid + '_camera'],
+            'suggested_area': 'Observatory',
+        }
+    
+    @sensor(
+        name="Name",
+        unit_of_measurement=UNIT_OF_MEASUREMENT_NONE,
+        icon=DEVICE_TYPE_CAMERA_ICON,
+        unique_id='awe4t4ats-1'
+    ) 
+    async def name(self):
+        return (await self.parent.jsonrpc_call(4700, 'get_camera_state'))['name']
+
+    @sensor(
+        name="State",
+        unit_of_measurement=UNIT_OF_MEASUREMENT_NONE,
+        icon=DEVICE_TYPE_CAMERA_ICON,
+        unique_id='awe4t4ats-2'
+    ) 
+    async def state(self):
+        return (await self.parent.jsonrpc_call(4700, 'get_camera_state'))['state']
+    
+    @sensor(
+        name="Cooler Power",
+        unit_of_measurement=UNIT_OF_MEASUREMENT_PERCENTAGE,
+        icon=DEVICE_TYPE_CAMERA_ICON,
+        state_class=STATE_CLASS_MEASUREMENT,
+        unique_id='awe4t4ats-3'
+    ) 
+    async def cooler_power(self):
+        try:
+            control_value_response = await asyncio.wait_for(self.parent.jsonrpc_call(4700, 'get_control_value', 'CoolPowerPerc'), 5)
+            logging.debug(control_value_response)
+        except:
+            sys.exit(0)
+        return (control_value_response)['value']
+    
+    @sensor(
+        name="Gain",
+        unit_of_measurement=UNIT_OF_MEASUREMENT_NONE,
+        icon=DEVICE_TYPE_CAMERA_ICON,
+        state_class=STATE_CLASS_MEASUREMENT,
+        unique_id='awe4t4ats-4'
+    ) 
+    async def gain(self):
+        return (await self.parent.jsonrpc_call(4700, 'get_control_value', 'Gain'))['value']
+    
+    @sensor(
+        name="Exposure",
+        unit_of_measurement=UNIT_OF_MEASUREMENT_SECONDS,
+        icon=DEVICE_TYPE_CAMERA_ICON,
+        state_class=STATE_CLASS_MEASUREMENT,
+        unique_id='awe4t4ats-5'
+    ) 
+    async def exposure_seconds(self):
+        return (await self.parent.jsonrpc_call(4700, 'get_control_value', 'Exposure'))['value'] / (1000*1000)
+
+nothing = [
+#        [
+#            TYPE_SENSOR,
+#            "CCD temperature",
+#            UNIT_OF_MEASUREMENT_TEMP_CELSIUS,
+#            DEVICE_TYPE_CAMERA_ICON,
+#            DEVICE_CLASS_TEMPERATURE,
+#            STATE_CLASS_MEASUREMENT,
+#            "asiair/Temperature",
+#            "{{ value_json.value }}"
+#        ],
+#        [
+#            TYPE_CLIMATE,
+#           "Cooling",
+#            UNIT_OF_MEASUREMENT_TEMP_CELSIUS,
+#            DEVICE_TYPE_CAMERA_ICON,
+#            DEVICE_CLASS_TEMPERATURE,
+#            STATE_CLASS_MEASUREMENT,
+#            "asiair/Temperature",
+#            "{{ value_json.value }}"
+#        ],
+#        [
+#            TYPE_BINARY_SENSOR,
+#            "Cooler on",
+#            UNIT_OF_MEASUREMENT_NONE,
+#            DEVICE_TYPE_CAMERA_ICON,
+#            DEVICE_CLASS_NONE,
+#            STATE_CLASS_NONE,
+#            "asiair/cooleron",
+#            "{% if value_json.value == 0 %}OFF{% else %}ON{% endif %}"
+#        ],
+        [
+            TYPE_SWITCH,
+            "Dew Heater on",
+            UNIT_OF_MEASUREMENT_NONE,
+            "mdi:heating-coil",
+            DEVICE_CLASS_SWITCH,
+            STATE_CLASS_NONE,
+            "asiair/antidewheater",
+            "{% if value_json.value == 0 %}OFF{% else %}ON{% endif %}"
+        ],
+]
