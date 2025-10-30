@@ -29,10 +29,6 @@ async def mqtt_publisher(clientMQTT, q, mqtt_root_topic):
                 x = message
                 try:
                     message['utime'] = int(time.time())
-                    if "method" in message and message["code"] == 0:
-                        if message["method"] == "get_control_value":
-                            message["method"] = str(message["result"]["name"]).lower()
-
                     if "Event" in message:
                         mqtt_publish(clientMQTT, mqtt_root_topic, message["Event"], message)
                     elif "method" in message and message["code"] == 0:

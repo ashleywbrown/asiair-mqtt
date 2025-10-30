@@ -364,7 +364,6 @@ class ZwoAsiair(ObservatorySoftware):
         await keepalive
 
     async def read_images(self, port=4800):
-        q = self.update_q
         image_available = self.image_available
         id = 1
         while True:
@@ -406,8 +405,6 @@ class ZwoAsiair(ObservatorySoftware):
                                 (result, imageData) = cv2.imencode(".png", imageData)
                                 byteArray = bytearray(imageData)
                                 print("MQTT publish result: " + str(result) + "; Len: " + str(len(byteArray)))
-                                # Old path
-                                await q.put(byteArray)
 
                                 # New path
                                 await self.event_q.put(('ImageDownload', byteArray))
