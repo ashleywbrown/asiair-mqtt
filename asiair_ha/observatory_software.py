@@ -42,12 +42,6 @@ class ObservatorySoftware:
     async def poll(self):
         raise NotImplementedError
     
-    async def execute_command(cmd: str, payload):
-        raise NotImplementedError
-    
-    async def _update(property: str, payload):
-        """ Sends an update on an MQTT topic. """
-        raise NotImplementedError
 
     @staticmethod
     def create(name: str, **kwargs):
@@ -68,5 +62,8 @@ class Device:
                 components.append(method)
         return components
 
-    def get_mqtt_device_config():
+    def uuid(self):
+        raise NotImplementedError
+
+    def get_mqtt_device_config(self):
         raise NotImplementedError

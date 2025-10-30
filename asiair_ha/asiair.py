@@ -1,4 +1,5 @@
 import asyncio
+from collections import namedtuple
 import struct
 import sys
 import tempfile
@@ -19,6 +20,7 @@ from const import (
     UNIT_OF_MEASUREMENT_PERCENTAGE,
     UNIT_OF_MEASUREMENT_SECONDS,
     UNIT_OF_MEASUREMENT_TEMP_CELSIUS,
+    UNIT_OF_MEASUREMENT_VOLTAGE,
 )
 import jsonrpc
 
@@ -39,40 +41,31 @@ from observatory_software import Device, ObservatorySoftware
 #
 # For certain things, e.g. the filter wheel, it makes sense to cache the
 # list response and send a friendlier name for the filterwheel slot.
-FILTER_WHEEL_COMMANDS_4700 = ["get_wheel_slot_name", "get_wheel_state", "get_wheel_setting", "get_wheel_position"]
-CAMERA_COMMANDS_4700 = [
-    "get_camera_state",
-    "get_camera_info", # camera capabilities - pixel size, dimensions, cooling etc
-    "get_camera_exp_and_bin",
-    "get_subframe",
- #   ("get_control_value", ["Gain"]),
-    ("get_control_value", ["CoolerOn"]),
- #   ("get_control_value", ["CoolPowerPerc"]),
-    ("get_control_value", ["TargetTemp"]),
- #   ("get_control_value", ["AntiDewHeater"]),
-#    ("get_control_value", ["Exposure"]),
-    ]
-SEQUENCE_COMMANDS_4700 = ["get_sequence", "get_sequence_number", "get_sequence_setting"]
+#FILTER_WHEEL_COMMANDS_4700 = ["get_wheel_slot_name", "get_wheel_state", "get_wheel_setting", "get_wheel_position"]
+#CAMERA_COMMANDS_4700 = [
+#    "get_camera_info", # camera capabilities - pixel size, dimensions, cooling etc
+#    "get_camera_exp_and_bin",
+#    "get_subframe",
+#   ]
+SEQUENCE_COMMANDS_4700 = ["get_sequence", "get_sequence_number"]
 TELESCOPE_COMMANDS_4400 = [
     "scope_get_ra_dec", "scope_get_location", "scope_get_pierside", "scope_get_track_state", "scope_is_moving", "scope_get_horiz_coord", "scope_get_track_mode" # 4400
     ]
 TELESCOPE_COMMANDS_4700 = [
     "get_focal_length",
 ]
-FOCUSER_COMMANDS_4700 = [
-    "get_focuser_state",
-    "get_focuser_caps",
-    "get_focuser_value",
-    ]
+#FOCUSER_COMMANDS_4700 = [
+#    "get_focuser_state",
+#    "get_focuser_caps",
+#    "get_focuser_value",
+#    ]
 
 PI_STATUS_COMMANDS_4700 = [
-    "pi_station_state",
     #"pi_is_verified",
     "get_app_state", # Returns everything needed to configure the UI, including active page
     #"pi_get_time",
     "pi_get_info",
-    "pi_get_ap",
-    "get_power_supply",
+#    "pi_get_ap",
     ]
 DEVICE_LIST_COMMANDS_4700 = ["get_connected_cameras"]
 
@@ -106,8 +99,6 @@ CalibrationComplete
 CalibrationFailed
 CalibrationFailed
 CalibrationFailed
-CoolerPower
-Exposure
 FocuserMove
 GuideStarLostTooMuch
 GuideStep
@@ -118,7 +109,6 @@ LockPositionSet
 LoopingExposures
 LoopingExposuresStopped
 LoopingFrames
-PiStatus
 PlateSolve
 RestartGuide
 ScopeHome
@@ -158,7 +148,7 @@ class ZwoAsiair(ObservatorySoftware):
         self.wheel_names = None
         self.pi_info = None
         self.devices = {
-            'asiair': ZwoAsiairDevice(self, 'asiair'),
+            'asiair': ZwoAsiairPi(self, 'asiair'),
             'focuser': Focuser(self, 'focuser'),
             'efw': FilterWheel(self, 'efw'),
             'camera': Camera(self, 'camera'),
@@ -187,6 +177,24 @@ class ZwoAsiair(ObservatorySoftware):
         if error_code != 0:
             raise RuntimeError("Non-zero exit code for " + function.__name__)
         return value
+
+    async def get_power_supply(self):
+        result =  (await self.jsonrpc_call(4700, 'get_power_supply'))
+        
+        power_supply = namedtuple('PowerSupply', ['outputs', 'input'])(
+            outputs=result[:-1],
+            input=result[-1],
+        )
+        return power_supply
+    
+    async def pi_station_state(self):
+        return FromJson(await self.jsonrpc_call(4700, 'pi_station_state'))
+    
+    async def get_app_state(self):
+        return FromJson(await self.jsonrpc_call(4700, 'get_app_state'))
+
+    async def get_sequence_setting(self):
+        return FromJson(await self.jsonrpc_call(4700, 'get_sequence_setting'))
 
     async def jsonrpc_call_async(self, port: int, command: str, *args):
         if port == 4400:
@@ -410,9 +418,17 @@ class ZwoAsiair(ObservatorySoftware):
                 logging.error(ex)
 
 class ZwoAsiairDevice(Device):
+    def __init__(self, parent: ZwoAsiair, name):
+        super().__init__(parent, name)
+
+    def uuid(self):
+        return self.parent.pi_info.guid + '.' + self.name
+
+class ZwoAsiairPi(ZwoAsiairDevice):
     """ The ASIAIR itself. """
     def __init__(self, parent: ZwoAsiair, name):
         self.pi_status = None
+        self.app_state = None
         super().__init__(parent, name)
 
     def get_mqtt_device_config(self):
@@ -427,20 +443,90 @@ class ZwoAsiairDevice(Device):
             'sw_version': pi_info.uname,
         }
     
+    def uuid(self):
+        return self.parent.pi_info.guid + '.' + self.name
+
     @sensor(
-        name="CPU ID",
+        name='Target',
+        icon='mdi:creation',
+    ) 
+    async def target(self):
+        return (await self.parent.get_sequence_setting()).group_name
+    
+    @sensor(
+        name='App Page',
+        icon='mdi:file-document-outline',
+    ) 
+    async def page(self):
+        return (await self.parent.get_app_state()).page
+
+    @sensor(
+        name='Wifi Station Signal Strength',
+        unit_of_measurement='dB',
+        icon='mdi:wifi',
+        device_class='signal_strength',
+        state_class='measurement',
+        entity_category='diagnostic',
+    ) 
+    async def wifi_station_signal_level(self):
+        return (await self.parent.pi_station_state()).sig_lev
+
+    @sensor(
+        name='Wifi Station Frequency',
+        unit_of_measurement='Mhz',
+        icon='mdi:wifi',
+        device_class='frequency',
+        entity_category='diagnostic',
+    ) 
+    async def wifi_station_freq(self):
+        return (await self.parent.pi_station_state()).freq
+    
+    @sensor(
+        name='Wifi Station SSID',
+        icon='mdi:wifi',
+        entity_category='diagnostic',
+    ) 
+    async def wifi_station_ssid(self):
+        return (await self.parent.pi_station_state()).ssid
+
+    @sensor(
+        name='Wifi Station IP',
+        icon='mdi:wifi',
+        entity_category='diagnostic',
+    ) 
+    async def wifi_station_ip(self):
+        return (await self.parent.pi_station_state()).ip
+    
+    @sensor(
+        name='Wifi Station Gateway',
+        icon='mdi:wifi',
+        entity_category='diagnostic',
+    ) 
+    async def wifi_station_gateway(self):
+        return (await self.parent.pi_station_state()).gateway
+    
+    @sensor(
+        name='Wifi Station Netmask',
+        icon='mdi:wifi',
+        entity_category='diagnostic',
+    ) 
+    async def wifi_station_netmask(self):
+        return (await self.parent.pi_station_state()).netmask
+
+    @sensor(
+        name='CPU ID',
         unit_of_measurement=UNIT_OF_MEASUREMENT_NONE,
-        icon="mdi:raspberry-pi",
-        unique_id='1235qwv45h4'
+        icon='mdi:raspberry-pi',
+        entity_category='diagnostic',
     ) 
     async def cpuid(self):
         return self.parent.pi_info.cpuId
     
     @sensor(
-        name="CPU Temperature",
+        name='CPU Temperature',
         unit_of_measurement=UNIT_OF_MEASUREMENT_TEMP_CELSIUS,
-        icon="mdi:thermometer",
-        unique_id='1235qwv45h6'
+        icon='mdi:thermometer',
+        entity_category='diagnostic',
     ) 
     async def cpu_temp(self):
         if self.pi_status is not None:
@@ -450,7 +536,104 @@ class ZwoAsiairDevice(Device):
         else:
             return None
 
-class Focuser(Device):
+    @sensor(
+        name='Port 1 Voltage',
+        unit_of_measurement='V',
+        icon='mdi:flash',
+        device_class='voltage',
+        state_class='measurement',
+        suggested_display_precision=2,
+        entity_category='diagnostic',
+    )
+    async def port_1_voltage(self):
+        return (await self.parent.get_power_supply()).input[0]
+    
+    @sensor(
+        name='Port 2 Voltage',
+        unit_of_measurement='V',
+        icon='mdi:flash',
+        device_class='voltage',
+        state_class='measurement',
+        suggested_display_precision=2,
+        entity_category='diagnostic',
+    )
+    async def port_2_voltage(self):
+        return (await self.parent.get_power_supply()).input[0]
+    
+    @sensor(
+        name='Port 3 Voltage',
+        unit_of_measurement='V',
+        icon='mdi:flash',
+        device_class='voltage',
+        state_class='measurement',
+        suggested_display_precision=2,
+        entity_category='diagnostic',
+    )
+    async def port_3_voltage(self):
+        return (await self.parent.get_power_supply()).input[0]
+    
+    @sensor(
+        name='Port 4 Voltage',
+        unit_of_measurement='V',
+        icon='mdi:flash',
+        device_class='voltage',
+        state_class='measurement',
+        suggested_display_precision=2,
+        entity_category='diagnostic',
+    )
+    async def port_4_voltage(self):
+        return (await self.parent.get_power_supply()).input[0]
+    
+    @sensor(
+        name='Input Voltage',
+        unit_of_measurement='V',
+        icon='mdi:flash',
+        device_class='voltage',
+        state_class='measurement',
+        suggested_display_precision=2,
+        entity_category='diagnostic',
+    )
+    async def input_voltage(self):
+        return (await self.parent.get_power_supply()).input[0]
+
+    @sensor(
+        name='Input Voltage',
+        unit_of_measurement='V',
+        icon='mdi:flash',
+        device_class='voltage',
+        state_class='measurement',
+        suggested_display_precision=2,
+        entity_category='diagnostic',
+    )
+    async def input_voltage(self):
+        return (await self.parent.get_power_supply()).input[0]
+
+    @sensor(
+        name='Input Current',
+        unit_of_measurement='A',
+        icon='mdi:flash',
+        device_class='current',
+        state_class='measurement',
+        suggested_display_precision=2,
+        entity_category='diagnostic',
+    )
+    async def input_current(self):
+        return (await self.parent.get_power_supply()).input[1]
+
+    @sensor(
+        name='Input Power',
+        unit_of_measurement='W',
+        icon='mdi:flash',
+        device_class='power',
+        state_class='measurement',
+        suggested_display_precision=2,
+        entity_category='diagnostic',
+    )
+    async def input_power(self):
+        input_supply = (await self.parent.get_power_supply()).input
+        return input_supply[0] * input_supply[1]
+
+class Focuser(ZwoAsiairDevice):
     """ The ASIAIR itself. """
     def __init__(self, parent: ZwoAsiair, name):
         super().__init__(parent, name)
@@ -464,7 +647,7 @@ class Focuser(Device):
             'identifiers': [pi_info.guid + '_focuser'],
             'suggested_area': 'Observatory',
         }
-    
+
     @sensor(
         name="Position",
         unit_of_measurement=UNIT_OF_MEASUREMENT_NONE,
@@ -474,7 +657,7 @@ class Focuser(Device):
     async def position(self):
         return await self.parent.jsonrpc_call(4700, 'get_focuser_position')
 
-class FilterWheel(Device):
+class FilterWheel(ZwoAsiairDevice):
     """ The ASIAIR filter wheel. """
     def __init__(self, parent: ZwoAsiair, name):
         self.wheel_names = []
@@ -506,7 +689,7 @@ class FilterWheel(Device):
         else:
             return None
 
-class Camera(Device):
+class Camera(ZwoAsiairDevice):
     """ The ASIAIR camera. """
     def __init__(self, parent: ZwoAsiair, name):
         self.sensor_temperature = None

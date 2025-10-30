@@ -4,9 +4,7 @@ import asyncio
 import paho.mqtt.client as mqtt
 import time
 
-from asiair import CAMERA_COMMANDS_4700
-
-from const import DEVICE_CLASS_SWITCH, DEVICE_TYPE_ASIAIR, DEVICE_TYPE_CAMERA, DEVICE_TYPE_CAMERA_FILE, DEVICE_TYPE_FILTERWHEEL, DEVICE_TYPE_FOCUSER, DEVICE_TYPE_TELESCOPE, FUNCTIONS, SENSOR_DEVICE_CLASS, SENSOR_EXTRA_FIELDS, SENSOR_ICON, SENSOR_NAME, SENSOR_STATE_CLASS, SENSOR_STATE_TOPIC, SENSOR_TYPE, SENSOR_UNIT, SENSOR_VALUE_TEMPLATE, TYPE_CLIMATE
+from const import DEVICE_CLASS_SWITCH, DEVICE_TYPE_ASIAIR, DEVICE_TYPE_TELESCOPE, FUNCTIONS, SENSOR_DEVICE_CLASS, SENSOR_EXTRA_FIELDS, SENSOR_ICON, SENSOR_NAME, SENSOR_STATE_CLASS, SENSOR_STATE_TOPIC, SENSOR_TYPE, SENSOR_UNIT, SENSOR_VALUE_TEMPLATE, TYPE_CLIMATE
 
 def mqtt_publish(mqtt, root_topic, type, message):
     logging.debug(root_topic + " -> " + type + "->" + str(json.dumps(message)))
@@ -15,7 +13,6 @@ def mqtt_publish(mqtt, root_topic, type, message):
 async def mqtt_publisher(clientMQTT, q, mqtt_root_topic):
     # Set up MQTT Home Assistant config.
     try:
-        asyncio.create_task(create_mqtt_config(clientMQTT, "asiair.asiair", DEVICE_TYPE_ASIAIR, "ASIAIR", FUNCTIONS[DEVICE_TYPE_ASIAIR]))
         asyncio.create_task(create_mqtt_config(clientMQTT, "asiair.telescope", DEVICE_TYPE_TELESCOPE, "Telescope", FUNCTIONS[DEVICE_TYPE_TELESCOPE]))
     except Exception as e:
         logging.debug(e)

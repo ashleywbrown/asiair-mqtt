@@ -112,6 +112,7 @@ async def main():
                     topic_callback
                     )
             
+            config['unique_id'] = '{0}.{1}.{2}'.format(cnx_name, device.uuid(), component.component_id)
             components[component.component_id] = config
             component.set_on_publish(lambda component, topic, payload, root_topic=component_root_topic: clientMQTT.publish(root_topic + ('' if topic == '' else '/' + topic ), payload, qos=1))
         logging.debug(' Registering components %s', components)
