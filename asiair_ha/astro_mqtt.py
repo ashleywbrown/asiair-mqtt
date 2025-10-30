@@ -88,18 +88,22 @@ async def main():
         components = {}
         for component in device.components():
             config = component.component_config
-            component_root_topic = '{cnx_name}/{device_name}/{component_id}/'.format(cnx_name=cnx_name, device_name=device.name, component_id=component.component_id)
+            component_root_topic = '{cnx_name}/{device_name}/{component_id}'.format(cnx_name=cnx_name, device_name=device.name, component_id=component.component_id)
 
             for topic in component.subscription_topic_map.keys():
-                config[topic + '_topic'] = component_root_topic + topic
+                if topic == '':
+                    config['topic'] = component_root_topic
+                else:
+                    config[topic + '_topic'] = component_root_topic + '/' + topic
 
             def callback(client, userdata, message, device, component, topic, fn, cmd_q):
                 logging.debug('Callback for %s %s %s %s', device.name, topic, fn, message.payload)
                 cmd_q.put_nowait((device, component, topic, fn, message.payload))
 
             for topic, fn in component.command_topic_map.items():
-                command_topic = component_root_topic + topic
+                command_topic = component_root_topic + '/' + topic
                 config[topic + '_topic'] = command_topic
+
                 clientMQTT.subscribe(command_topic)
                 topic_callback = partial(callback, device=device, component=component, topic=command_topic, fn=fn, cmd_q=cmd_q)
                 topic_callback.__name__ = 'partial'
@@ -109,7 +113,7 @@ async def main():
                     )
             
             components[component.component_id] = config
-            component.set_on_publish(lambda component, topic, payload, root_topic=component_root_topic: clientMQTT.publish(root_topic + topic, payload, qos=1))
+            component.set_on_publish(lambda component, topic, payload, root_topic=component_root_topic: clientMQTT.publish(root_topic + ('' if topic == '' else '/' + topic ), payload, qos=1))
         logging.debug(' Registering components %s', components)
         
         discovery_payload = {

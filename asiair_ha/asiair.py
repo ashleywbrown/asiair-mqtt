@@ -6,19 +6,15 @@ import json, time
 import zipfile
 import paho.mqtt.client as mqtt
 import logging
-from components import climate, sensor, switch
+from components import camera, climate, sensor, switch
 from astrolive.image import ImageManipulation
 from const import (
-    CAMERA_SAMPLE_RESOLUTION,
-    DEVICE_CLASS_NONE,
     DEVICE_CLASS_SWITCH,
     DEVICE_TYPE_CAMERA_ICON,
     DEVICE_TYPE_FILTERWHEEL_ICON,
     DEVICE_TYPE_FOCUSER_ICON,
     STATE_CLASS_MEASUREMENT,
     STATE_CLASS_NONE,
-    TYPE_SENSOR,
-    TYPE_SWITCH,
     UNIT_OF_MEASUREMENT_NONE,
     UNIT_OF_MEASUREMENT_PERCENTAGE,
     UNIT_OF_MEASUREMENT_SECONDS,
@@ -85,8 +81,9 @@ COMMANDS_PORT_4700 = (
     SEQUENCE_COMMANDS_4700 +
     TELESCOPE_COMMANDS_4700 +
     #FOCUSER_COMMANDS_4700 +
-    PI_STATUS_COMMANDS_4700 + 
-    CAMERA_COMMANDS_4700)
+    PI_STATUS_COMMANDS_4700  
+    #CAMERA_COMMANDS_4700
+    )
 
 COMMANDS_PORT_4400 = (TELESCOPE_COMMANDS_4400)
 COMMANDS_PORT_4800 = ["get_current_img"]
@@ -109,7 +106,6 @@ CalibrationComplete
 CalibrationFailed
 CalibrationFailed
 CalibrationFailed
-CameraControlChange
 CoolerPower
 Exposure
 FocuserMove
@@ -134,7 +130,6 @@ StarLost
 StarSelected
 StartCalibration
 StartGuiding
-Temperature
 Version
 
 Nginx                       // Related to video stacking
@@ -267,17 +262,24 @@ class ZwoAsiair(ObservatorySoftware):
             logging.error("Poll error %s", ex)
             sys.exit(0)
 
-    async def _handle_event(self, event, payload):
+    async def _handle_event(self, event, payload: dict|bytearray):
         logging.debug('Event %s %s', event, payload)
         camera = self.devices['camera']
         efw = self.devices['efw']
-        if event == "Exposure" and payload["state"] == "complete":
-            self.image_available.set()
+        if event == "Exposure":
+            if payload["state"] == "complete":
+                self.image_available.set()
+            await camera.state.publish(camera)
         elif event == "Temperature":
             camera.sensor_temperature = payload['value']
             await camera.cooling.publish(camera)
         elif event == "CoolerPower":
             await camera.cooler_power.publish(camera)
+        elif event == 'ImageDownload':
+            camera.latest_image = payload
+            await camera.image.publish(camera)
+            # We don't need to keep sending this on poll.
+            camera.latest_image = None
         if event == "WheelMove" and payload["state"] == "complete":
             await efw.current.publish(efw)
         elif event == "CameraControlChange":
@@ -397,7 +399,11 @@ class ZwoAsiair(ObservatorySoftware):
                                 (result, imageData) = cv2.imencode(".png", imageData)
                                 byteArray = bytearray(imageData)
                                 print("MQTT publish result: " + str(result) + "; Len: " + str(len(byteArray)))
+                                # Old path
                                 await q.put(byteArray)
+
+                                # New path
+                                await self.event_q.put(('ImageDownload', byteArray))
                     else:
                         print(str(port) + " Width <= 0")
                         print(str(port) + " => " + str(header))
@@ -500,6 +506,7 @@ class Camera(Device):
     """ The ASIAIR camera. """
     def __init__(self, parent: ZwoAsiair, name):
         self.sensor_temperature = None
+        self.latest_image = None
         super().__init__(parent, name)
 
     def get_mqtt_device_config(self):
@@ -511,7 +518,16 @@ class Camera(Device):
             'identifiers': [pi_info.guid + '_camera'],
             'suggested_area': 'Observatory',
         }
-    
+
+    @camera(
+        name="Latest Image",
+        unit_of_measurement=UNIT_OF_MEASUREMENT_NONE,
+        icon=DEVICE_TYPE_CAMERA_ICON,
+        unique_id='awe4t4ats-cam'
+    ) 
+    async def image(self):
+        return self.latest_image
+
     @sensor(
         name="Name",
         unit_of_measurement=UNIT_OF_MEASUREMENT_NONE,

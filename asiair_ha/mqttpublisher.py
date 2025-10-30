@@ -16,7 +16,6 @@ async def mqtt_publisher(clientMQTT, q, mqtt_root_topic):
     # Set up MQTT Home Assistant config.
     try:
         asyncio.create_task(create_mqtt_config(clientMQTT, "asiair.asiair", DEVICE_TYPE_ASIAIR, "ASIAIR", FUNCTIONS[DEVICE_TYPE_ASIAIR]))
-        asyncio.create_task(create_mqtt_config(clientMQTT, "asiair.camera", DEVICE_TYPE_CAMERA, "Camera", FUNCTIONS[DEVICE_TYPE_CAMERA]))
         asyncio.create_task(create_mqtt_config(clientMQTT, "asiair.telescope", DEVICE_TYPE_TELESCOPE, "Telescope", FUNCTIONS[DEVICE_TYPE_TELESCOPE]))
     except Exception as e:
         logging.debug(e)
@@ -162,25 +161,4 @@ async def create_mqtt_config(mqtt, sys_id, device_type, device_friendly_name, de
         mqtt.publish(root_topic + "config", json.dumps(config), qos=0, retain=True)
 
     logging.debug("Published MQTT Config for a %s", device_type)
-
-    if device_type in (DEVICE_TYPE_CAMERA, DEVICE_TYPE_CAMERA_FILE):
-        # If the device is a camera or camera_file we create a camera entity configuration
-        root_topic = "homeassistant/camera/asiair/" + device_friendly_name_low + "/"
-        config = {
-            "name": device_friendly_name_cap,
-            "topic": "asiair/image/latestImage",
-            #"availability_topic": "astrolive/" + device_type + "/" + sys_id_ + "/lwt",
-            #"payload_available": "ON",
-            #"payload_not_available": "OFF",
-            "unique_id": device_type + "_" + device_friendly_name_low + "_" + sys_id_,
-            "device": {
-                "identifiers": [sys_id],
-                "name": "ASIAIR " + device_friendly_name_cap,
-                "model": device_friendly_name_cap,
-                "manufacturer": "ASIAIR-MQTT Bridge",
-            },
-        }
-        mqtt.publish(root_topic + "config", json.dumps(config), qos=0, retain=True)
-        logging.debug("Published MQTT Camera Config for a %s", device_type)
-
     return None

@@ -76,6 +76,7 @@ TYPE_BINARY_SENSOR = "binary_sensor"
 TYPE_SENSOR = "sensor"
 TYPE_SWITCH = "switch"
 TYPE_TEXT = "text"
+TYPE_CAMERA = "camera"
 TYPE_CLIMATE = "climate"
 TYPE_DEVICE_TRACKER = "device_tracker"
 
@@ -490,36 +491,6 @@ FUNCTIONS = {
         ],
     ),
     DEVICE_TYPE_CAMERA: (
-        [
-            TYPE_SENSOR,
-            "CCD temperature",
-            UNIT_OF_MEASUREMENT_TEMP_CELSIUS,
-            DEVICE_TYPE_CAMERA_ICON,
-            DEVICE_CLASS_TEMPERATURE,
-            STATE_CLASS_MEASUREMENT,
-            "asiair/Temperature",
-            "{{ value_json.value }}"
-        ],
-        [
-            TYPE_CLIMATE,
-            "Cooling",
-            UNIT_OF_MEASUREMENT_TEMP_CELSIUS,
-            DEVICE_TYPE_CAMERA_ICON,
-            DEVICE_CLASS_TEMPERATURE,
-            STATE_CLASS_MEASUREMENT,
-            "asiair/Temperature",
-            "{{ value_json.value }}"
-        ],
-        [
-            TYPE_BINARY_SENSOR,
-            "Cooler on",
-            UNIT_OF_MEASUREMENT_NONE,
-            DEVICE_TYPE_CAMERA_ICON,
-            DEVICE_CLASS_NONE,
-            STATE_CLASS_NONE,
-            "asiair/cooleron",
-            "{% if value_json.value == 0 %}OFF{% else %}ON{% endif %}"
-        ],
         #[
         #    TYPE_SENSOR,
         #    "Image array",

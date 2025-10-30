@@ -3,7 +3,7 @@ from functools import partial
 import json
 import logging
 import sys
-from const import TYPE_CLIMATE, TYPE_SENSOR, TYPE_SWITCH
+from const import TYPE_CAMERA, TYPE_CLIMATE, TYPE_SENSOR, TYPE_SWITCH
 
 
 def component(
@@ -28,7 +28,9 @@ def component(
                 logging.debug("... found %d", len(results))
                 for topic, result in zip(topics, results):
                     logging.error("publish %s - %s - %s", state.component_id, topic, result)
-                    if not isinstance(result, str):
+                    if result is None:
+                        continue
+                    if not isinstance(result, str) and not isinstance(result, bytearray):
                         result = json.dumps(result)
                     state.on_publish(state, topic, result)
             except Exception as ex:
@@ -80,9 +82,19 @@ def climate(**kwargs):
     def climate(func):
         state = component(
             platform=TYPE_CLIMATE,
-            subscription_topics=['current_temperature', 'temperature_state', 'mode_state'],
+            subscription_topics=['current_temperature', 'temperature_state', 'mode_state', 'json_attributes'],
             command_topics=['temperature_command', 'mode_command', 'power_command'],
             **kwargs)(func)
         
         return state
     return climate
+
+def camera(**kwargs):
+    def camera(func):
+        state = component(
+            platform=TYPE_CAMERA,
+            subscription_topics=['', 'json_attributes'],
+            **kwargs)(func)
+        
+        return state
+    return camera
