@@ -662,6 +662,7 @@ class ZwoAsiairPi(ZwoAsiairDevice):
         input_supply = (await self.parent.get_power_supply()).input
         return input_supply[0] * input_supply[1]
 
+
 class Telescope(ZwoAsiairDevice):
 
     def get_mqtt_device_config(self):
@@ -764,7 +765,6 @@ class Telescope(ZwoAsiairDevice):
         return (await self.parent.scope_is_moving()) != 'none'
 
 
-
 class Focuser(ZwoAsiairDevice):
     """ The ASIAIR itself. """
     def __init__(self, parent: ZwoAsiair, name):
@@ -787,6 +787,7 @@ class Focuser(ZwoAsiairDevice):
     ) 
     async def position(self):
         return await self.parent.jsonrpc_call(4700, 'get_focuser_position')
+
 
 class FilterWheel(ZwoAsiairDevice):
     """ The ASIAIR filter wheel. """
@@ -819,6 +820,7 @@ class FilterWheel(ZwoAsiairDevice):
             return self.wheel_names[position]
         else:
             return None
+
 
 class Camera(ZwoAsiairDevice):
     """ The ASIAIR camera. """
