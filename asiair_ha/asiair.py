@@ -184,6 +184,15 @@ class ZwoAsiair(ObservatorySoftware):
         self.port4700 = asyncio.create_task(self.read_events(self.cmd_q_4700, 4700))
         self.images = asyncio.create_task(self.read_images())
 
+    async def get_control_value(self, value_name: str):
+        return (await self.jsonrpc_call(4700, 'get_control_value', value_name))['value']
+
+    async def set_control_value(self, value_name: str, value):
+        error_code = await self.jsonrpc_call(4700, 'set_control_value', value_name, value)
+        if error_code != 0:
+            raise RuntimeError("Non-zero exit code for " + function.__name__)
+        return value
+
     async def jsonrpc_call_async(self, port: int, command: str, *args):
         if port == 4400:
             cmd_q = self.cmd_q_4400
@@ -256,27 +265,27 @@ class ZwoAsiair(ObservatorySoftware):
             asyncio.gather(poll_loop(), event_loop(), self.port4400, self.port4700, self.images)
         except Exception as ex:
             logging.error("Poll error %s", ex)
+            sys.exit(0)
 
     async def _handle_event(self, event, payload):
+        logging.debug('Event %s %s', event, payload)
+        camera = self.devices['camera']
+        efw = self.devices['efw']
         if event == "Exposure" and payload["state"] == "complete":
             self.image_available.set()
+        elif event == "Temperature":
+            camera.sensor_temperature = payload['value']
+            await camera.cooling.publish(camera)
+        elif event == "CoolerPower":
+            await camera.cooler_power.publish(camera)
         if event == "WheelMove" and payload["state"] == "complete":
-            if self.wheel_names is None:
-                self.wheel_names = await self.jsonrpc_call(4700, 'get_wheel_slot_name')
-            asyncio.gather(
-                self.update_q.put({'method': 'WheelName', 'code': 0, 'result': self.wheel_names[payload["position"]]}),
-                self.update_q.put({'method': 'get_wheel_position', 'code': 0, 'result': payload["position"]})
-            )
+            await efw.current.publish(efw)
         elif event == "CameraControlChange":
-            camera = self.devices['camera']
-            logging.debug('CameraControlChange - publishing updates.')
-            for component in [camera.gain, camera.exposure_seconds, camera.cooler_power, camera.dewheater]:
-                logging.debug('  %s %s', component, component.component_id)
+            for component in [camera.gain, camera.exposure_seconds, camera.cooler_power, camera.dewheater, camera.cooling]:
                 try:
                     await component.publish(camera)
                 except Exception as ex:
-                    logging.debug('exception %s', ex)
-                logging.debug('complete')
+                    logging.error('exception %s', ex)
 
 
             for command in CAMERA_COMMANDS_4700:
@@ -490,6 +499,7 @@ class FilterWheel(Device):
 class Camera(Device):
     """ The ASIAIR camera. """
     def __init__(self, parent: ZwoAsiair, name):
+        self.sensor_temperature = None
         super().__init__(parent, name)
 
     def get_mqtt_device_config(self):
@@ -508,7 +518,7 @@ class Camera(Device):
         icon=DEVICE_TYPE_CAMERA_ICON,
         unique_id='awe4t4ats-1'
     ) 
-    async def name(self):
+    async def device_name(self):
         return (await self.parent.jsonrpc_call(4700, 'get_camera_state'))['name']
 
     @sensor(
@@ -528,12 +538,8 @@ class Camera(Device):
         unique_id='awe4t4ats-3'
     ) 
     async def cooler_power(self):
-        try:
-            control_value_response = await asyncio.wait_for(self.parent.jsonrpc_call(4700, 'get_control_value', 'CoolPowerPerc'), 5)
-            logging.debug(control_value_response)
-        except:
-            sys.exit(0)
-        return (control_value_response)['value']
+        logging.debug('Got Cooler Power')
+        return await self.parent.get_control_value('CoolPowerPerc')
     
     @sensor(
         name="Gain",
@@ -543,7 +549,7 @@ class Camera(Device):
         unique_id='awe4t4ats-4'
     ) 
     async def gain(self):
-        return (await self.parent.jsonrpc_call(4700, 'get_control_value', 'Gain'))['value']
+        return await self.parent.get_control_value('Gain')
     
     @sensor(
         name="Exposure",
@@ -553,7 +559,7 @@ class Camera(Device):
         unique_id='awe4t4ats-5'
     ) 
     async def exposure_seconds(self):
-        return (await self.parent.jsonrpc_call(4700, 'get_control_value', 'Exposure'))['value'] / (1000*1000)
+        return await self.parent.get_control_value('Exposure') / (1000*1000)
 
     @switch(
         name='Dew Heater',
@@ -562,15 +568,16 @@ class Camera(Device):
         device_class=DEVICE_CLASS_SWITCH,
         state_class=STATE_CLASS_NONE,
         unique_id='awe4t4ats-6',
-        value_template='{% if value_json == 0 %}OFF{% else %}ON{% endif %}',
-        command_template='{% if value == "ON" %}1{% else %}0{% endif %}'
+        value_template='{% if value_json == false %}OFF{% else %}ON{% endif %}',
+        command_template='{% if value == "OFF" %}false{% else %}true{% endif %}'
     ) 
     async def dewheater(self):
-        return (await self.parent.jsonrpc_call(4700, 'get_control_value', 'AntiDewHeater'))['value']
+        #return bool((await self.parent.jsonrpc_call(4700, 'get_control_value', 'AntiDewHeater'))['value'])
+        return bool(await self.parent.get_control_value('AntiDewHeater'))
 
     @dewheater.command
     async def set_dewheater(self, value):
-        error_code = await self.parent.jsonrpc_call(4700, 'set_control_value', 'AntiDewHeater', value)
+        error_code = await self.parent.jsonrpc_call(4700, 'set_control_value', 'AntiDewHeater', int(value))
         if error_code == 0:
             return value # return the latest value for publication.
         else:
@@ -581,54 +588,30 @@ class Camera(Device):
         temperature_unit='C',
         icon='mdi:snowflake',
         max_temp=40,
-        min_temp=40,
+        min_temp=-40,
         modes=['off', 'cool'],
         unique_id='awe4t4ats-7')
     async def cooling(self):
-        pass
+        return self.sensor_temperature
+
+    @cooling.temperature_state
+    async def get_cooling_temperature(self):
+        return await self.parent.get_control_value('TargetTemp')
 
     @cooling.temperature_command
     async def set_cooling_temperature(self, temp):
-        return temp
+        return await self.parent.set_control_value('TargetTemp', temp)
 
     @cooling.mode_state
     async def cooling_mode(self):
-        return 'off'
+        return 'cool' if bool(await self.parent.get_control_value('CoolerOn')) else 'off'
 
     @cooling.mode_command
-    async def set_cooling_mode(self, mode):
-        return 'off'
+    async def set_cooling_mode(self, mode: str):
+        logging.error('Cooling mode %s', mode)
+        await self.parent.set_control_value('CoolerOn', 1 if mode != 'off' else 0)
+        return mode
 
-nothing = [
-#        [
-#            TYPE_SENSOR,
-#            "CCD temperature",
-#            UNIT_OF_MEASUREMENT_TEMP_CELSIUS,
-#            DEVICE_TYPE_CAMERA_ICON,
-#            DEVICE_CLASS_TEMPERATURE,
-#            STATE_CLASS_MEASUREMENT,
-#            "asiair/Temperature",
-#            "{{ value_json.value }}"
-#        ],
-#        [
-#            TYPE_CLIMATE,
-#           "Cooling",
-#            UNIT_OF_MEASUREMENT_TEMP_CELSIUS,
-#            DEVICE_TYPE_CAMERA_ICON,
-#            DEVICE_CLASS_TEMPERATURE,
-#            STATE_CLASS_MEASUREMENT,
-#            "asiair/Temperature",
-#            "{{ value_json.value }}"
-#        ],
-#        [
-#            TYPE_BINARY_SENSOR,
-#            "Cooler on",
-#            UNIT_OF_MEASUREMENT_NONE,
-#            DEVICE_TYPE_CAMERA_ICON,
-#            DEVICE_CLASS_NONE,
-#            STATE_CLASS_NONE,
-#            "asiair/cooleron",
-#            "{% if value_json.value == 0 %}OFF{% else %}ON{% endif %}"
-#        ],
-
-]
+    @cooling.power_command
+    async def cooling_power(self, onoff: str):
+        await self.parent.set_control_value('CoolerOn', int(onoff != 'OFF'))

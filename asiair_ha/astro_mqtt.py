@@ -1,6 +1,6 @@
 import asyncio
 
-import inspect
+from functools import partial
 import json
 import sys
 import logging
@@ -10,11 +10,13 @@ from asiair import ZwoAsiair
 from const import DEVICE_CLASS_NONE, STATE_CLASS_NONE, TYPE_SENSOR, TYPE_SWITCH, UNIT_OF_MEASUREMENT_NONE
 from mqttpublisher import mqtt_publisher, sensor_publisher
 
+
 logging.basicConfig(#filename="./ASIAIR_"+str(sys.argv[2])+".log",
                     #filemode="a",
                     format="%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s",
                     datefmt="%H:%M:%S",
-                    level=logging.DEBUG)
+                    level=logging.DEBUG,
+                    force=True)
 
 # get connection details from params
 asiair_host  = str(sys.argv[1])
@@ -27,7 +29,11 @@ async def command_router(cmd_q: asyncio.Queue):
     while True:
         try:
             (device, component, topic, fn, payload) = await cmd_q.get()
-            new_value = await fn(device, json.loads(payload))
+            try:
+                payload = json.loads(payload)
+            except json.JSONDecodeError:
+                payload = payload.decode() # just use the string
+            new_value = await fn(device, payload)
             if new_value is not None:
                 component.on_publish(component, topic, new_value)
         except Exception as ex:
@@ -87,13 +93,20 @@ async def main():
             for topic in component.subscription_topic_map.keys():
                 config[topic + '_topic'] = component_root_topic + topic
 
+            def callback(client, userdata, message, device, component, topic, fn, cmd_q):
+                logging.debug('Callback for %s %s %s %s', device.name, topic, fn, message.payload)
+                cmd_q.put_nowait((device, component, topic, fn, message.payload))
+
             for topic, fn in component.command_topic_map.items():
                 command_topic = component_root_topic + topic
                 config[topic + '_topic'] = command_topic
                 clientMQTT.subscribe(command_topic)
+                topic_callback = partial(callback, device=device, component=component, topic=command_topic, fn=fn, cmd_q=cmd_q)
+                topic_callback.__name__ = 'partial'
                 clientMQTT.message_callback_add(
                     command_topic,
-                    lambda client, userdata, message, device=device, component=component, topic=command_topic, fn=fn, cmd_q=cmd_q: cmd_q.put_nowait((device, component, topic, fn, message.payload)))
+                    topic_callback
+                    )
             
             components[component.component_id] = config
             component.set_on_publish(lambda component, topic, payload, root_topic=component_root_topic: clientMQTT.publish(root_topic + topic, payload, qos=1))

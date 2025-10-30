@@ -1,6 +1,8 @@
 import asyncio
 from functools import partial
+import json
 import logging
+import sys
 from const import TYPE_CLIMATE, TYPE_SENSOR, TYPE_SWITCH
 
 
@@ -18,13 +20,20 @@ def component(
         
         # TODO: Move this to a set of helper functions to remove asyncio in this module.
         async def publish(self, *args, **kwargs):
-            logging.debug("call on_publish")
-            iterable_topics = [(topic, fn) for topic, fn in state.subscription_topic_map.items()]
-            topics = [topic for topic, fn in iterable_topics ]
-            results = await asyncio.gather(*[fn(self, *args, **kwargs) for (topic, fn) in iterable_topics])
-            for topic, result in zip(topics, results):
-                state.on_publish(state, topic, result)
-
+            try:
+                iterable_topics = [(topic, fn) for topic, fn in state.subscription_topic_map.items()]
+                topics = [topic for topic, fn in iterable_topics ]
+                logging.debug("fetching sensor states for %s... %s", state.component_id, topics)
+                results = await asyncio.gather(*[fn(self, *args, **kwargs) for (topic, fn) in iterable_topics])
+                logging.debug("... found %d", len(results))
+                for topic, result in zip(topics, results):
+                    logging.error("publish %s - %s - %s", state.component_id, topic, result)
+                    if not isinstance(result, str):
+                        result = json.dumps(result)
+                    state.on_publish(state, topic, result)
+            except Exception as ex:
+                logging.error(ex)
+                sys.exit(-1)
         def set_on_publish(func):
             logging.debug("set_on_publish")
             state.on_publish = func
@@ -71,7 +80,7 @@ def climate(**kwargs):
     def climate(func):
         state = component(
             platform=TYPE_CLIMATE,
-            subscription_topics=['temperature_state', 'mode_state'],
+            subscription_topics=['current_temperature', 'temperature_state', 'mode_state'],
             command_topics=['temperature_command', 'mode_command', 'power_command'],
             **kwargs)(func)
         
