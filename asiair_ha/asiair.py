@@ -446,7 +446,7 @@ class ZwoAsiairDevice(Device):
         if self.pi_status is not None:
             return self.pi_status.temp
         elif self.parent.pi_info is not None:
-            return self.pi_info.temp
+            return self.parent.pi_info.temp
         else:
             return None
 
