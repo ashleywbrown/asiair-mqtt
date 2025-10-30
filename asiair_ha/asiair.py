@@ -6,7 +6,7 @@ import json, time
 import zipfile
 import paho.mqtt.client as mqtt
 import logging
-from components import sensor, switch
+from components import climate, sensor, switch
 from astrolive.image import ImageManipulation
 from const import (
     CAMERA_SAMPLE_RESOLUTION,
@@ -67,7 +67,8 @@ FOCUSER_COMMANDS_4700 = [
     "get_focuser_state",
     "get_focuser_caps",
     "get_focuser_value",
-    "get_focuser_position"]
+    ]
+
 PI_STATUS_COMMANDS_4700 = [
     "pi_station_state",
     #"pi_is_verified",
@@ -76,14 +77,14 @@ PI_STATUS_COMMANDS_4700 = [
     "pi_get_info",
     "pi_get_ap",
     "get_power_supply",
-    "get_connected",
     ]
 DEVICE_LIST_COMMANDS_4700 = ["get_connected_cameras"]
 
-COMMANDS_PORT_4700 = (FILTER_WHEEL_COMMANDS_4700 +
+COMMANDS_PORT_4700 = (
+    #FILTER_WHEEL_COMMANDS_4700 +
     SEQUENCE_COMMANDS_4700 +
     TELESCOPE_COMMANDS_4700 +
-    FOCUSER_COMMANDS_4700 +
+    #FOCUSER_COMMANDS_4700 +
     PI_STATUS_COMMANDS_4700 + 
     CAMERA_COMMANDS_4700)
 
@@ -177,8 +178,7 @@ class ZwoAsiair(ObservatorySoftware):
         self.update_q = asyncio.Queue()
         self.cmd_q_4400 = asyncio.Queue()
         self.cmd_q_4700 = asyncio.Queue()
-        # Used to publish outside of the main event loop.
-        self.cmd_scheduler_q = asyncio.Queue()
+        self.event_q = asyncio.Queue()
         self.image_available = asyncio.Event()
         self.port4400 = asyncio.create_task(self.read_events(self.cmd_q_4400, 4400))
         self.port4700 = asyncio.create_task(self.read_events(self.cmd_q_4700, 4700))
@@ -224,17 +224,16 @@ class ZwoAsiair(ObservatorySoftware):
             )
             if len(self.wheel_names) > 0:
                 await self.update_q.put({'method': 'WheelName', 'code': 0, 'result': self.wheel_names[position]}),
-            
-            async def cmd_loop():
+
+            # Process events from the event queue.
+            async def event_loop():
                 while True:
-                    # Publish all components.
                     try:
-                        cmd = await self.cmd_scheduler_q.get()
-                        await cmd()
+                        (event, payload) = await self.event_q.get()
+                        await self._handle_event(event, payload)
                     except Exception as ex:
                         logging.error(ex)
                         sys.exit(0)
-                
 
             async def poll_loop():
                 while True:
@@ -254,7 +253,7 @@ class ZwoAsiair(ObservatorySoftware):
                         logging.error(ex)
                         sys.exit(0)
             logging.debug(">>>>>>>>>>>>>>>>>>> Polling")
-            asyncio.gather(poll_loop(), cmd_loop(), self.port4400, self.port4700, self.images)
+            asyncio.gather(poll_loop(), event_loop(), self.port4400, self.port4700, self.images)
         except Exception as ex:
             logging.error("Poll error %s", ex)
 
@@ -274,8 +273,7 @@ class ZwoAsiair(ObservatorySoftware):
             for component in [camera.gain, camera.exposure_seconds, camera.cooler_power, camera.dewheater]:
                 logging.debug('  %s %s', component, component.component_id)
                 try:
-                    self.cmd_scheduler_q.put_nowait(
-                        lambda component=component, camera=camera: component.publish(camera))
+                    await component.publish(camera)
                 except Exception as ex:
                     logging.debug('exception %s', ex)
                 logging.debug('complete')
@@ -336,7 +334,8 @@ class ZwoAsiair(ObservatorySoftware):
                 #logging.debug("Received %s", message)
                 if "Event" in message:
                     try:
-                        await self._handle_event(message["Event"], message)
+                        #await self._handle_event(message["Event"], message)
+                        await self.event_q.put((message['Event'], message))
                     except Exception as ex:
                         logging.debug(ex)
                         sys.exit(1)
@@ -569,7 +568,7 @@ class Camera(Device):
     async def dewheater(self):
         return (await self.parent.jsonrpc_call(4700, 'get_control_value', 'AntiDewHeater'))['value']
 
-    @dewheater.setter
+    @dewheater.command
     async def set_dewheater(self, value):
         error_code = await self.parent.jsonrpc_call(4700, 'set_control_value', 'AntiDewHeater', value)
         if error_code == 0:
@@ -577,6 +576,28 @@ class Camera(Device):
         else:
             raise RuntimeError("Non-zero exit code for " + function.__name__)
 
+    @climate(
+        name='Cooling',
+        temperature_unit='C',
+        icon='mdi:snowflake',
+        max_temp=40,
+        min_temp=40,
+        modes=['off', 'cool'],
+        unique_id='awe4t4ats-7')
+    async def cooling(self):
+        pass
+
+    @cooling.temperature_command
+    async def set_cooling_temperature(self, temp):
+        return temp
+
+    @cooling.mode_state
+    async def cooling_mode(self):
+        return 'off'
+
+    @cooling.mode_command
+    async def set_cooling_mode(self, mode):
+        return 'off'
 
 nothing = [
 #        [
@@ -609,14 +630,5 @@ nothing = [
 #            "asiair/cooleron",
 #            "{% if value_json.value == 0 %}OFF{% else %}ON{% endif %}"
 #        ],
-        [
-            TYPE_SWITCH,
-            "Dew Heater on",
-            UNIT_OF_MEASUREMENT_NONE,
-            "mdi:heating-coil",
-            DEVICE_CLASS_SWITCH,
-            STATE_CLASS_NONE,
-            "asiair/antidewheater",
-            "{% if value_json.value == 0 %}OFF{% else %}ON{% endif %}"
-        ],
+
 ]

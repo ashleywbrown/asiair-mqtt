@@ -26,10 +26,10 @@ mqtt_password     = str(sys.argv[5])
 async def command_router(cmd_q: asyncio.Queue):
     while True:
         try:
-            (component, device, payload) = await cmd_q.get()
-            new_value = await component.setfn(device, json.loads(payload))
+            (device, component, topic, fn, payload) = await cmd_q.get()
+            new_value = await fn(device, json.loads(payload))
             if new_value is not None:
-                component.on_publish(component, new_value)
+                component.on_publish(component, topic, new_value)
         except Exception as ex:
             logging.error(ex)
 
@@ -62,8 +62,8 @@ async def main():
     clientMQTT.connect(mqtt_host, mqtt_port, 60)
     clientMQTT.on_message = on_message
     clientMQTT.loop_start()
- 
-    logging.info("Starting MQTT publisher")
+    log = logging.getLogger(__name__)
+    log.info("Starting MQTT publisher")
     publisher = asyncio.create_task(mqtt_publisher(
         clientMQTT,
         connections['asiair'].update_q,
@@ -80,23 +80,23 @@ async def main():
         dv = device.get_mqtt_device_config()
         discovery_topic = 'homeassistant/device/asiair/asiair/config' # remove hard coding
         components = {}
-        for component_fn in device.components():
-            config = component_fn.component_config
-            state_topic = '{cnx_name}/{device_name}/{component_id}'.format(cnx_name=cnx_name, device_name=device.name, component_id=component_fn.component_id)
-            config['state_topic'] = state_topic
+        for component in device.components():
+            config = component.component_config
+            component_root_topic = '{cnx_name}/{device_name}/{component_id}/'.format(cnx_name=cnx_name, device_name=device.name, component_id=component.component_id)
 
-            if config['platform'] in [TYPE_SWITCH]:
-                command_topic = '{state_topic}/set'.format(state_topic=state_topic)
-                config['command_topic'] = command_topic
+            for topic in component.subscription_topic_map.keys():
+                config[topic + '_topic'] = component_root_topic + topic
+
+            for topic, fn in component.command_topic_map.items():
+                command_topic = component_root_topic + topic
+                config[topic + '_topic'] = command_topic
                 clientMQTT.subscribe(command_topic)
-
                 clientMQTT.message_callback_add(
                     command_topic,
-                    lambda client, userdata, message, device=device, component_fn=component_fn, cmd_q=cmd_q: cmd_q.put_nowait((component_fn, device, message.payload)))
-
+                    lambda client, userdata, message, device=device, component=component, topic=command_topic, fn=fn, cmd_q=cmd_q: cmd_q.put_nowait((device, component, topic, fn, message.payload)))
             
-            components[component_fn.component_id] = config
-            component_fn.set_on_publish(lambda component, payload, state_topic=state_topic: clientMQTT.publish(state_topic, payload, qos=1))
+            components[component.component_id] = config
+            component.set_on_publish(lambda component, topic, payload, root_topic=component_root_topic: clientMQTT.publish(root_topic + topic, payload, qos=1))
         logging.debug(' Registering components %s', components)
         
         discovery_payload = {

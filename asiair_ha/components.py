@@ -1,31 +1,57 @@
+import asyncio
+from functools import partial
 import logging
-from const import TYPE_SENSOR, TYPE_SWITCH
+from const import TYPE_CLIMATE, TYPE_SENSOR, TYPE_SWITCH
 
 
-def component(platform=TYPE_SENSOR, **kwargs):
+def component(
+        platform=TYPE_SENSOR,
+        subscription_topics=['state', 'json_attributes'], 
+        command_topics=[],
+        **kwargs):
     def component(func):
-        def get_wrapper(self, *args, **kwargs):
+        def state(self, *args, **kwargs):
             return func(self, *args, **kwargs)
         
         # Event handler - set by main code.
-        get_wrapper.on_publish = None
+        state.on_publish = None
         
+        # TODO: Move this to a set of helper functions to remove asyncio in this module.
         async def publish(self, *args, **kwargs):
             logging.debug("call on_publish")
-            result = await func(self, *args, **kwargs)
-            get_wrapper.on_publish(get_wrapper, result)
+            iterable_topics = [(topic, fn) for topic, fn in state.subscription_topic_map.items()]
+            topics = [topic for topic, fn in iterable_topics ]
+            results = await asyncio.gather(*[fn(self, *args, **kwargs) for (topic, fn) in iterable_topics])
+            for topic, result in zip(topics, results):
+                state.on_publish(state, topic, result)
 
         def set_on_publish(func):
             logging.debug("set_on_publish")
-            get_wrapper.on_publish = func
+            state.on_publish = func
 
-        get_wrapper.publish = publish
-        get_wrapper.set_on_publish = set_on_publish
+        state.publish = publish
+        state.set_on_publish = set_on_publish
 
-        get_wrapper.component_id = func.__name__
-        get_wrapper.component_config = kwargs
-        get_wrapper.component_config['platform'] = platform
-        return get_wrapper
+        state.subscription_topic_map = {}
+        state.command_topic_map = {}
+
+        def topic_setter(func, topic_map, topic):
+            topic_map[topic] = func
+            logging.error('%s', topic_map)
+            return func
+        
+        if len(subscription_topics) > 0:
+            state.subscription_topic_map[subscription_topics[0]] = state
+        for topic_map, topics in [
+            (state.subscription_topic_map, subscription_topics[1:]),
+            (state.command_topic_map, command_topics)]:
+            for topic in topics:
+                setattr(state, topic, partial(topic_setter, topic_map=topic_map, topic=topic))
+
+        state.component_id = func.__name__
+        state.component_config = kwargs
+        state.component_config['platform'] = platform
+        return state
     return component
 
 def sensor(**kwargs):
@@ -33,12 +59,21 @@ def sensor(**kwargs):
 
 def switch(**kwargs):
     def switch(func):
-        get_wrapper = component(platform=TYPE_SWITCH, **kwargs)(func)
-        get_wrapper.setfn = None
-        def setter(func):
-            get_wrapper.setfn = func
-        get_wrapper.setter = setter
-        return get_wrapper
+        state = component(
+            platform=TYPE_SWITCH,
+            command_topics=['command'],
+            **kwargs)(func)
+        return state
 
     return switch
 
+def climate(**kwargs):
+    def climate(func):
+        state = component(
+            platform=TYPE_CLIMATE,
+            subscription_topics=['temperature_state', 'mode_state'],
+            command_topics=['temperature_command', 'mode_command', 'power_command'],
+            **kwargs)(func)
+        
+        return state
+    return climate
