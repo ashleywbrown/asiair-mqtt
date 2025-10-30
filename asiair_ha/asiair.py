@@ -266,6 +266,7 @@ class ZwoAsiair(ObservatorySoftware):
         logging.debug('Event %s %s', event, payload)
         camera = self.devices['camera']
         efw = self.devices['efw']
+        asiair = self.devices['asiair']
         if event == "Exposure":
             if payload["state"] == "complete":
                 self.image_available.set()
@@ -280,6 +281,9 @@ class ZwoAsiair(ObservatorySoftware):
             await camera.image.publish(camera)
             # We don't need to keep sending this on poll.
             camera.latest_image = None
+        elif event == "PiStatus":
+            asiair.pi_status = FromJson(payload)
+            await asiair.cpu_temp.publish(asiair)
         if event == "WheelMove" and payload["state"] == "complete":
             await efw.current.publish(efw)
         elif event == "CameraControlChange":
@@ -288,11 +292,6 @@ class ZwoAsiair(ObservatorySoftware):
                     await component.publish(camera)
                 except Exception as ex:
                     logging.error('exception %s', ex)
-
-
-            for command in CAMERA_COMMANDS_4700:
-                (method, args) = command_args(command)
-                await self.jsonrpc_call_async(4700, method, *args)
         elif event == "ScopeTrack":
             await self.update_q.put({'method': 'scope_get_track_state', 'code': 0, 'result': payload["state"] == "on"})
 
@@ -413,6 +412,7 @@ class ZwoAsiair(ObservatorySoftware):
 class ZwoAsiairDevice(Device):
     """ The ASIAIR itself. """
     def __init__(self, parent: ZwoAsiair, name):
+        self.pi_status = None
         super().__init__(parent, name)
 
     def get_mqtt_device_config(self):
@@ -443,8 +443,12 @@ class ZwoAsiairDevice(Device):
         unique_id='1235qwv45h6'
     ) 
     async def cpu_temp(self):
-        self.parent.pi_info = FromJson(await self.parent.jsonrpc_call(4700, 'pi_get_info'))
-        return self.parent.pi_info.temp
+        if self.pi_status is not None:
+            return self.pi_status.temp
+        elif self.parent.pi_info is not None:
+            return self.pi_info.temp
+        else:
+            return None
 
 class Focuser(Device):
     """ The ASIAIR itself. """
