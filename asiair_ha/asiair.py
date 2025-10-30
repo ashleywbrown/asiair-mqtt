@@ -14,8 +14,10 @@ from const import (
     DEVICE_TYPE_CAMERA_ICON,
     DEVICE_TYPE_FILTERWHEEL_ICON,
     DEVICE_TYPE_FOCUSER_ICON,
+    DEVICE_TYPE_TELESCOPE_ICON,
     STATE_CLASS_MEASUREMENT,
     STATE_CLASS_NONE,
+    UNIT_OF_MEASUREMENT_DEGREE,
     UNIT_OF_MEASUREMENT_NONE,
     UNIT_OF_MEASUREMENT_PERCENTAGE,
     UNIT_OF_MEASUREMENT_SECONDS,
@@ -49,7 +51,7 @@ from observatory_software import Device, ObservatorySoftware
 #   ]
 SEQUENCE_COMMANDS_4700 = ["get_sequence", "get_sequence_number"]
 TELESCOPE_COMMANDS_4400 = [
-    "scope_get_ra_dec", "scope_get_location", "scope_get_pierside", "scope_get_track_state", "scope_is_moving", "scope_get_horiz_coord", "scope_get_track_mode" # 4400
+    "scope_get_location", "scope_is_moving", # 4400
     ]
 TELESCOPE_COMMANDS_4700 = [
     "get_focal_length",
@@ -152,6 +154,7 @@ class ZwoAsiair(ObservatorySoftware):
             'focuser': Focuser(self, 'focuser'),
             'efw': FilterWheel(self, 'efw'),
             'camera': Camera(self, 'camera'),
+            'telescope': Telescope(self, 'telescope'),
         }
         super().__init__(name)
 
@@ -195,6 +198,24 @@ class ZwoAsiair(ObservatorySoftware):
 
     async def get_sequence_setting(self):
         return FromJson(await self.jsonrpc_call(4700, 'get_sequence_setting'))
+    
+    async def scope_get_horiz_coord(self):
+        return await self.jsonrpc_call(4400, 'scope_get_horiz_coord')
+
+    async def scope_get_ra_dec(self):
+        return await self.jsonrpc_call(4400, 'scope_get_ra_dec')
+
+    async def scope_get_pierside(self):
+        return await self.jsonrpc_call(4400, 'scope_get_pierside')
+
+    async def scope_get_track_mode(self):
+        return FromJson(await self.jsonrpc_call(4400, 'scope_get_track_mode'))
+
+    async def scope_get_track_state(self):
+        return await self.jsonrpc_call(4400, 'scope_get_track_state')
+
+    async def scope_set_track_state(self, on: bool):
+        return await self.jsonrpc_call(4400, 'scope_set_track_state', on)
 
     async def jsonrpc_call_async(self, port: int, command: str, *args):
         if port == 4400:
@@ -275,6 +296,7 @@ class ZwoAsiair(ObservatorySoftware):
         camera = self.devices['camera']
         efw = self.devices['efw']
         asiair = self.devices['asiair']
+        telescope = self.devices['telescope']
         if event == "Exposure":
             if payload["state"] == "complete":
                 self.image_available.set()
@@ -292,6 +314,9 @@ class ZwoAsiair(ObservatorySoftware):
         elif event == "PiStatus":
             asiair.pi_status = FromJson(payload)
             await asiair.cpu_temp.publish(asiair)
+        elif event == "ScopeTrack":
+            await telescope.tracking.publish(telescope)
+
         if event == "WheelMove" and payload["state"] == "complete":
             await efw.current.publish(efw)
         elif event == "CameraControlChange":
@@ -470,7 +495,7 @@ class ZwoAsiairPi(ZwoAsiairDevice):
 
     @sensor(
         name='Wifi Station Frequency',
-        unit_of_measurement='Mhz',
+        unit_of_measurement='MHz',
         icon='mdi:wifi',
         device_class='frequency',
         entity_category='diagnostic',
@@ -630,6 +655,90 @@ class ZwoAsiairPi(ZwoAsiairDevice):
         input_supply = (await self.parent.get_power_supply()).input
         return input_supply[0] * input_supply[1]
 
+class Telescope(ZwoAsiairDevice):
+
+    def get_mqtt_device_config(self):
+        pi_info = self.parent.pi_info
+        return {
+            'name': 'ZWO ASIAIR - Telescope',
+            'model': 'Telescope',
+            'manufacturer': 'Suzhou ZWO Co., Ltd',
+            'identifiers': [pi_info.guid + '_telescope'],
+            'suggested_area': 'Observatory',
+        }
+    
+    @sensor(
+        name="Altitude",
+        unit_of_measurement=UNIT_OF_MEASUREMENT_DEGREE,
+        icon=DEVICE_TYPE_TELESCOPE_ICON,
+        state_class=STATE_CLASS_MEASUREMENT,
+    ) 
+    async def altitude(self):
+        return (await self.parent.scope_get_horiz_coord())[0]
+    
+    @sensor(
+        name="Azimuth",
+        unit_of_measurement=UNIT_OF_MEASUREMENT_DEGREE,
+        icon=DEVICE_TYPE_TELESCOPE_ICON,
+        state_class=STATE_CLASS_MEASUREMENT,
+    ) 
+    async def azimuth(self):
+        return (await self.parent.scope_get_horiz_coord())[1]
+    
+    @sensor(
+        name="Right Ascension",
+        unit_of_measurement=UNIT_OF_MEASUREMENT_DEGREE,
+        icon=DEVICE_TYPE_TELESCOPE_ICON,
+        state_class=STATE_CLASS_MEASUREMENT,
+    ) 
+    async def right_ascension(self):
+        return (await self.parent.scope_get_ra_dec())[0]
+    
+    @sensor(
+        name="Declination",
+        unit_of_measurement=UNIT_OF_MEASUREMENT_DEGREE,
+        icon=DEVICE_TYPE_TELESCOPE_ICON,
+        state_class=STATE_CLASS_MEASUREMENT,
+    ) 
+    async def declination(self):
+        return (await self.parent.scope_get_ra_dec())[1]
+    
+    @sensor(
+        name="Pier Side",
+        icon=DEVICE_TYPE_TELESCOPE_ICON,
+        device_class='enum',
+        enum=['pier_east', 'pier_west']
+    ) 
+    async def pier_side(self):
+        return await self.parent.scope_get_pierside()
+
+    @sensor(
+        name="Track Mode",
+        icon=DEVICE_TYPE_TELESCOPE_ICON,
+    ) 
+    async def track_mode(self):
+        track_mode = await self.parent.scope_get_track_mode()
+        return track_mode.list[track_mode.index]
+
+    @switch(
+        name="Tracking",
+        icon=DEVICE_TYPE_TELESCOPE_ICON,
+    ) 
+    async def tracking(self):
+        return await self.parent.scope_get_track_state()
+    
+    @tracking.command
+    async def set_tracking(self, on: bool):
+        return await self.parent.scope_set_track_state(on)
+    
+    @tracking.json_attributes
+    async def tracking_attributes(self):
+        return {
+            'Mode': await self.track_mode()
+        }
+
+
+
 class Focuser(ZwoAsiairDevice):
     """ The ASIAIR itself. """
     def __init__(self, parent: ZwoAsiair, name):
@@ -649,7 +758,6 @@ class Focuser(ZwoAsiairDevice):
         name="Position",
         unit_of_measurement=UNIT_OF_MEASUREMENT_NONE,
         icon=DEVICE_TYPE_FOCUSER_ICON,
-        unique_id='1236qw245h6'
     ) 
     async def position(self):
         return await self.parent.jsonrpc_call(4700, 'get_focuser_position')
@@ -707,7 +815,6 @@ class Camera(ZwoAsiairDevice):
         name="Latest Image",
         unit_of_measurement=UNIT_OF_MEASUREMENT_NONE,
         icon=DEVICE_TYPE_CAMERA_ICON,
-        unique_id='awe4t4ats-cam'
     ) 
     async def image(self):
         return self.latest_image
@@ -716,7 +823,6 @@ class Camera(ZwoAsiairDevice):
         name="Name",
         unit_of_measurement=UNIT_OF_MEASUREMENT_NONE,
         icon=DEVICE_TYPE_CAMERA_ICON,
-        unique_id='awe4t4ats-1'
     ) 
     async def device_name(self):
         return (await self.parent.jsonrpc_call(4700, 'get_camera_state'))['name']
@@ -725,7 +831,6 @@ class Camera(ZwoAsiairDevice):
         name="State",
         unit_of_measurement=UNIT_OF_MEASUREMENT_NONE,
         icon=DEVICE_TYPE_CAMERA_ICON,
-        unique_id='awe4t4ats-2'
     ) 
     async def state(self):
         return (await self.parent.jsonrpc_call(4700, 'get_camera_state'))['state']
@@ -735,7 +840,6 @@ class Camera(ZwoAsiairDevice):
         unit_of_measurement=UNIT_OF_MEASUREMENT_PERCENTAGE,
         icon=DEVICE_TYPE_CAMERA_ICON,
         state_class=STATE_CLASS_MEASUREMENT,
-        unique_id='awe4t4ats-3'
     ) 
     async def cooler_power(self):
         logging.debug('Got Cooler Power')
@@ -746,7 +850,6 @@ class Camera(ZwoAsiairDevice):
         unit_of_measurement=UNIT_OF_MEASUREMENT_NONE,
         icon=DEVICE_TYPE_CAMERA_ICON,
         state_class=STATE_CLASS_MEASUREMENT,
-        unique_id='awe4t4ats-4'
     ) 
     async def gain(self):
         return await self.parent.get_control_value('Gain')
@@ -756,23 +859,15 @@ class Camera(ZwoAsiairDevice):
         unit_of_measurement=UNIT_OF_MEASUREMENT_SECONDS,
         icon=DEVICE_TYPE_CAMERA_ICON,
         state_class=STATE_CLASS_MEASUREMENT,
-        unique_id='awe4t4ats-5'
     ) 
     async def exposure_seconds(self):
         return await self.parent.get_control_value('Exposure') / (1000*1000)
 
     @switch(
         name='Dew Heater',
-        unit_of_measurement=UNIT_OF_MEASUREMENT_NONE,
         icon='mdi:heating-coil',
-        device_class=DEVICE_CLASS_SWITCH,
-        state_class=STATE_CLASS_NONE,
-        unique_id='awe4t4ats-6',
-        value_template='{% if value_json == false %}OFF{% else %}ON{% endif %}',
-        command_template='{% if value == "OFF" %}false{% else %}true{% endif %}'
     ) 
     async def dewheater(self):
-        #return bool((await self.parent.jsonrpc_call(4700, 'get_control_value', 'AntiDewHeater'))['value'])
         return bool(await self.parent.get_control_value('AntiDewHeater'))
 
     @dewheater.command
@@ -791,7 +886,7 @@ class Camera(ZwoAsiairDevice):
         min_temp=-40,
         modes=['off', 'cool'],
         action_template='{% if value_json == 0 %}off{% else %}cooling{% endif %}',
-        unique_id='awe4t4ats-7')
+        )
     async def cooling(self):
         return self.sensor_temperature
 

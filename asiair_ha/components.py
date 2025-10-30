@@ -3,7 +3,7 @@ from functools import partial
 import json
 import logging
 import sys
-from const import TYPE_CAMERA, TYPE_CLIMATE, TYPE_SENSOR, TYPE_SWITCH
+from const import DEVICE_CLASS_SWITCH, STATE_CLASS_NONE, TYPE_CAMERA, TYPE_CLIMATE, TYPE_SENSOR, TYPE_SWITCH, UNIT_OF_MEASUREMENT_NONE
 
 
 def component(
@@ -68,11 +68,22 @@ def component(
 def sensor(**kwargs):
     return component(platform=TYPE_SENSOR, **kwargs)
 
-def switch(**kwargs):
+def switch(
+        device_class=DEVICE_CLASS_SWITCH,
+        unit_of_measurement=UNIT_OF_MEASUREMENT_NONE,
+        state_class=STATE_CLASS_NONE,
+        value_template='{% if value_json == false %}OFF{% else %}ON{% endif %}',
+        command_template='{% if value == "OFF" %}false{% else %}true{% endif %}',
+        **kwargs):
     def switch(func):
         state = component(
             platform=TYPE_SWITCH,
             command_topics=['command'],
+            device_class=device_class,
+            state_class=state_class,
+            unit_of_measurement=unit_of_measurement,
+            value_template=value_template,
+            command_template=command_template,
             **kwargs)(func)
         return state
 
