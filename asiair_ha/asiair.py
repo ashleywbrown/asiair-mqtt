@@ -606,6 +606,7 @@ class Camera(Device):
         max_temp=40,
         min_temp=-40,
         modes=['off', 'cool'],
+        action_template='{% if value_json == 0 %}off{% else %}cooling{% endif %}',
         unique_id='awe4t4ats-7')
     async def cooling(self):
         return self.sensor_temperature
@@ -631,3 +632,7 @@ class Camera(Device):
     @cooling.power_command
     async def cooling_power(self, onoff: str):
         await self.parent.set_control_value('CoolerOn', int(onoff != 'OFF'))
+
+    @cooling.action
+    async def cooling_action(self):
+        return await self.parent.get_control_value('CoolPowerPerc')

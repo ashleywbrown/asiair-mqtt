@@ -82,7 +82,7 @@ def climate(**kwargs):
     def climate(func):
         state = component(
             platform=TYPE_CLIMATE,
-            subscription_topics=['current_temperature', 'temperature_state', 'mode_state', 'json_attributes'],
+            subscription_topics=['current_temperature', 'temperature_state', 'mode_state', 'action', 'json_attributes'],
             command_topics=['temperature_command', 'mode_command', 'power_command'],
             **kwargs)(func)
         

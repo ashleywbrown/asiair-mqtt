@@ -119,27 +119,6 @@ async def create_mqtt_config(mqtt, sys_id, device_type, device_friendly_name, de
         if function[SENSOR_UNIT] != "" and function[SENSOR_UNIT] is not None:
             config["unit_of_measurement"] = function[SENSOR_UNIT]
 
-        if function[SENSOR_TYPE] == TYPE_CLIMATE:
-            config["action_topic"] = "asiair/coolpowerperc"
-            config["action_template"] = "{% if value_json.value == 0 %}off{% else %}cooling{% endif %}"
-            config["mode_state_topic"] = "asiair/cooleron"
-            config["mode_state_template"] = "{% if value_json.value == 0 %}off{% else %}cool{% endif %}"
-            config["modes"] = ["off", "cool"]
-            config["min_temp"] = -40
-            config["max_temp"] = 40
-            config["current_temperature_topic"] = "asiair/Temperature"
-            config["current_temperature_template"] = "{{ value_json.value }}"
-            config["temperature_state_topic"] = "asiair/targettemp"
-            config["temperature_state_template"] = "{{ value_json.value }}"
-
-            config["temperature_command_topic"] = "asiair/set_control_value/cmd"
-            config["temperature_command_template"] = "[\"TargetTemp\", {{ value }}]"
-
-            config["mode_command_topic"] = "asiair/set_control_value/cmd"
-            config["mode_command_template"] = "[\"CoolerOn\", {% if value == 'off' %}0{% else %}1{% endif %}]"
-
-            mqtt.subscribe("asiair/set_control_value/cmd")
-
         #if function[SENSOR_TYPE] == TYPE_TEXT:
         #    config["command_topic"] = ("astrolive/" + device_type + "/" + sys_id_ + "/cmd",)
 
