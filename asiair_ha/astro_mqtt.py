@@ -7,9 +7,6 @@ import logging
 import paho.mqtt.client as mqtt
 
 from asiair import ZwoAsiair
-from const import DEVICE_CLASS_NONE, STATE_CLASS_NONE, TYPE_SENSOR, TYPE_SWITCH, UNIT_OF_MEASUREMENT_NONE
-from mqttpublisher import mqtt_publisher, sensor_publisher
-
 
 logging.basicConfig(#filename="./ASIAIR_"+str(sys.argv[2])+".log",
                     #filemode="a",
@@ -36,6 +33,7 @@ async def command_router(cmd_q: asyncio.Queue):
             new_value = await fn(device, payload)
             if new_value is not None:
                 component.on_publish(component, topic, new_value)
+            cmd_q.task_done()
         except Exception as ex:
             logging.error(ex)
 
@@ -50,30 +48,12 @@ async def main():
         logging.info('Opening connections for "%s"', name)
         await cnx.connect()
 
-    # Setup MQTT.
-    def on_message(client, connections, message: mqtt.MQTTMessage):
-        (connection_name, suffix) = message.topic.split('/', 1)
-
-        cnx = connections[connection_name]
-        cmd_q_4700 = cnx.cmd_q_4700
-        if (cmd_q_4700):
-            logging.debug(">>>>>>>>>>> %s: %s", message.topic, message.payload)
-            if suffix == "set_control_value/cmd":
-                cmd_q_4700.put_nowait(("set_control_value", json.loads(message.payload)))
-
     logging.info("Connecting MQTT: %s : %d", mqtt_host, mqtt_port)
     clientMQTT = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2, userdata=connections)
     if mqtt_username and mqtt_password:
         clientMQTT.username_pw_set(username=mqtt_username, password=mqtt_password)
     clientMQTT.connect(mqtt_host, mqtt_port, 60)
-    clientMQTT.on_message = on_message
     clientMQTT.loop_start()
-    log = logging.getLogger(__name__)
-    log.info("Starting MQTT publisher")
-    publisher = asyncio.create_task(mqtt_publisher(
-        clientMQTT,
-        connections['asiair'].update_q,
-        'asiair'))
     logging.info("Discovering devices...")
 
     all_devices = []
@@ -130,7 +110,6 @@ async def main():
     
     polling = list(map(lambda cnx: cnx.poll(), connections.values()))
     logging.info("Starting... %d", len(polling))
-    await connections['asiair'].poll()
-    await asyncio.gather(command_router(cmd_q), publisher, *polling)
+    await asyncio.gather(command_router(cmd_q), *polling)
 
 asyncio.run(main())

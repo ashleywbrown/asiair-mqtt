@@ -103,35 +103,3 @@ DEVICE_CLASS_TIMESTAMP = "timestamp"
 
 STATE_CLASS_NONE = None
 STATE_CLASS_MEASUREMENT = "measurement"
-
-FUNCTIONS = {
-    DEVICE_TYPE_TELESCOPE: (
-#        [
-#            TYPE_BINARY_SENSOR,
-#            "At home",
-#            UNIT_OF_MEASUREMENT_NONE,
-#            DEVICE_TYPE_TELESCOPE_ICON,
-#            DEVICE_CLASS_NONE,
-#            STATE_CLASS_NONE,
-#        ],
-#        [
-#            TYPE_BINARY_SENSOR,
-#            "At park",
-#            UNIT_OF_MEASUREMENT_NONE,
-#            DEVICE_TYPE_TELESCOPE_ICON,
-#            DEVICE_CLASS_NONE,
-#            STATE_CLASS_NONE,
-#        ],
-#        [
-#            TYPE_SENSOR,
-#            "Site elevation",
-#            UNIT_OF_MEASUREMENT_METER,
-#            DEVICE_TYPE_TELESCOPE_ICON,
-#            DEVICE_CLASS_DISTANCE,
-#            STATE_CLASS_MEASUREMENT,
-#        ],
-
-    ),
-}
-
-
