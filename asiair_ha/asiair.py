@@ -7,7 +7,7 @@ import json, time
 import zipfile
 import paho.mqtt.client as mqtt
 import logging
-from components import camera, climate, sensor, switch
+from components import binary_sensor, camera, climate, device_tracker, sensor, switch
 from astrolive.image import ImageManipulation
 from const import (
     DEVICE_CLASS_SWITCH,
@@ -216,6 +216,13 @@ class ZwoAsiair(ObservatorySoftware):
 
     async def scope_set_track_state(self, on: bool):
         return await self.jsonrpc_call(4400, 'scope_set_track_state', on)
+
+    async def scope_get_location(self):
+        return await self.jsonrpc_call(4400, 'scope_get_location')
+
+    async def scope_is_moving(self):
+        return await self.jsonrpc_call(4400, 'scope_is_moving')
+
 
     async def jsonrpc_call_async(self, port: int, command: str, *args):
         if port == 4400:
@@ -736,6 +743,25 @@ class Telescope(ZwoAsiairDevice):
         return {
             'Mode': await self.track_mode()
         }
+
+    @device_tracker(
+        name='Site Location',
+        icon=DEVICE_TYPE_TELESCOPE_ICON,
+        subscription_topics=['json_attributes'],
+    )
+    async def site_location(self):
+        location = await self.parent.scope_get_location()
+        return {
+            'latitude': location[0],
+            'longitude': location[1],
+        }
+    
+    @binary_sensor(
+        name='Slewing',
+        icon='mdi:rotate-orbit',
+    )
+    async def is_slewing(self):
+        return (await self.parent.scope_is_moving()) != 'none'
 
 
 

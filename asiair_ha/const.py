@@ -130,54 +130,7 @@ FUNCTIONS = {
 #            DEVICE_CLASS_DISTANCE,
 #            STATE_CLASS_MEASUREMENT,
 #        ],
-        [
-            TYPE_DEVICE_TRACKER,
-            "Location",
-            UNIT_OF_MEASUREMENT_NONE,
-            DEVICE_TYPE_TELESCOPE_ICON,
-            DEVICE_CLASS_NONE,
-            STATE_CLASS_NONE,
-            "asiair/dummytopic",
-            "",
-            {
-                "json_attributes_topic": "asiair/scope_get_location",
-                "json_attributes_template": "{ \"latitude\": {{ value_json[0] }}, \"longitude\": {{ value_json[1] }} }",
-            }
-        ],
-        [
-            TYPE_SENSOR,
-            "Site Latitude",
-            UNIT_OF_MEASUREMENT_DEGREE,
-            DEVICE_TYPE_TELESCOPE_ICON,
-            DEVICE_CLASS_NONE,
-            STATE_CLASS_MEASUREMENT,
-            "asiair/scope_get_location",
-            "{{ value_json[0] }}"
-        ],
-        [
-            TYPE_SENSOR,
-            "Site Longitude",
-            UNIT_OF_MEASUREMENT_DEGREE,
-            DEVICE_TYPE_TELESCOPE_ICON,
-            DEVICE_CLASS_NONE,
-            STATE_CLASS_MEASUREMENT,
-            "asiair/scope_get_location",
-            "{{ value_json[1] }}"
-        ],
-        [
-            TYPE_BINARY_SENSOR,
-            "Slewing",
-            UNIT_OF_MEASUREMENT_NONE,
-            DEVICE_TYPE_TELESCOPE_ICON,
-            DEVICE_CLASS_NONE,
-            STATE_CLASS_NONE,
-            "asiair/scope_is_moving",
-            "{{ value_json != 'none' }}",
-            {
-                "payload_on": "none",
-                "payload_off": "none",
-            }
-        ],
+
     ),
 }
 

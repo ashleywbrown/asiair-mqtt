@@ -124,9 +124,7 @@ async def main():
                 'sw_version': '0.1',
                 'support_url': 'https://github.com/ashleywbrown/asiair-mqtt',
             },
-            'cmps': components,
-            'state_topic': 'asiair/pi_get_info', # Can add a better topic here.
-            
+            'cmps': components            
         }
         clientMQTT.publish(discovery_topic, json.dumps(discovery_payload), qos=0, retain=True)
     

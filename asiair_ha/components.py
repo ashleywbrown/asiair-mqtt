@@ -3,7 +3,7 @@ from functools import partial
 import json
 import logging
 import sys
-from const import DEVICE_CLASS_SWITCH, STATE_CLASS_NONE, TYPE_CAMERA, TYPE_CLIMATE, TYPE_SENSOR, TYPE_SWITCH, UNIT_OF_MEASUREMENT_NONE
+from const import DEVICE_CLASS_SWITCH, STATE_CLASS_NONE, TYPE_BINARY_SENSOR, TYPE_CAMERA, TYPE_CLIMATE, TYPE_DEVICE_TRACKER, TYPE_SENSOR, TYPE_SWITCH, UNIT_OF_MEASUREMENT_NONE
 
 
 def component(
@@ -68,6 +68,18 @@ def component(
 def sensor(**kwargs):
     return component(platform=TYPE_SENSOR, **kwargs)
 
+def binary_sensor(
+        value_template='{% if value_json == false %}OFF{% else %}ON{% endif %}',
+        **kwargs):
+    def binary_sensor(func):
+        state = component(
+            platform=TYPE_BINARY_SENSOR,
+            value_template=value_template,
+            **kwargs)(func)
+        
+        return state
+    return binary_sensor
+
 def switch(
         device_class=DEVICE_CLASS_SWITCH,
         unit_of_measurement=UNIT_OF_MEASUREMENT_NONE,
@@ -109,3 +121,12 @@ def camera(**kwargs):
         
         return state
     return camera
+
+def device_tracker(**kwargs):
+    def device_tracker(func):
+        state = component(
+            platform=TYPE_DEVICE_TRACKER,
+            **kwargs)(func)
+        
+        return state
+    return device_tracker
