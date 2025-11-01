@@ -79,6 +79,7 @@ TYPE_TEXT = "text"
 TYPE_CAMERA = "camera"
 TYPE_CLIMATE = "climate"
 TYPE_DEVICE_TRACKER = "device_tracker"
+TYPE_NUMBER = "number"
 
 UNIT_OF_MEASUREMENT_NONE = None
 UNIT_OF_MEASUREMENT_ARCSEC_PER_SEC = '"/s'

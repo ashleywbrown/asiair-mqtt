@@ -29,7 +29,7 @@ import jsonrpc
 
 import cv2
 import numpy as np
-from observatory_software import Device, ObservatorySoftware
+from observatory_software import Camera, Device, ObservatorySoftware
 
 # Commands to interrogate the system:
 # https://www.cloudynights.com/topic/900861-seestar-s50asiair-jailbreak-ssh/page-4
@@ -153,7 +153,7 @@ class ZwoAsiair(ObservatorySoftware):
             'asiair': ZwoAsiairPi(self, 'asiair'),
             'focuser': Focuser(self, 'focuser'),
             'efw': FilterWheel(self, 'efw'),
-            'camera': Camera(self, 'camera'),
+            'camera': AsiAirCamera(self, 'camera'),
             'telescope': Telescope(self, 'telescope'),
         }
         super().__init__(name)
@@ -283,11 +283,6 @@ class ZwoAsiair(ObservatorySoftware):
                             for component in device.components():
                                 logging.debug(component)
                                 await component.publish(device)
-
-                        for port in [4400, 4700]:
-                            for command in COMMANDS[str(port)]:
-                                (method, args) = command_args(command)
-                                await self.jsonrpc_call_async(port, method, *args)
                         await asyncio.sleep(45)
                     except Exception as ex:
                         logging.error(ex)
@@ -371,7 +366,7 @@ class ZwoAsiair(ObservatorySoftware):
             try:
                 message = json.loads(message)
                 if "method" in message and message["id"] in event_map:
-                    logging.debug("Reponse to message %d", message["id"])
+#                    logging.debug("Reponse to message %d", message["id"])
                     event = event_map[message["id"]]
                     try:
                         event.result = message["result"]
@@ -822,7 +817,7 @@ class FilterWheel(ZwoAsiairDevice):
             return None
 
 
-class Camera(ZwoAsiairDevice):
+class AsiAirCamera(ZwoAsiairDevice, Camera):
     """ The ASIAIR camera. """
     def __init__(self, parent: ZwoAsiair, name):
         self.sensor_temperature = None
@@ -847,12 +842,7 @@ class Camera(ZwoAsiairDevice):
     async def image(self):
         return self.latest_image
 
-    @sensor(
-        name="Name",
-        unit_of_measurement=UNIT_OF_MEASUREMENT_NONE,
-        icon=DEVICE_TYPE_CAMERA_ICON,
-    ) 
-    async def device_name(self):
+    async def _device_name(self):
         return (await self.parent.jsonrpc_call(4700, 'get_camera_state'))['name']
 
     @sensor(
@@ -863,13 +853,7 @@ class Camera(ZwoAsiairDevice):
     async def state(self):
         return (await self.parent.jsonrpc_call(4700, 'get_camera_state'))['state']
     
-    @sensor(
-        name="Cooler Power",
-        unit_of_measurement=UNIT_OF_MEASUREMENT_PERCENTAGE,
-        icon=DEVICE_TYPE_CAMERA_ICON,
-        state_class=STATE_CLASS_MEASUREMENT,
-    ) 
-    async def cooler_power(self):
+    async def _cooler_power(self):
         logging.debug('Got Cooler Power')
         return await self.parent.get_control_value('CoolPowerPerc')
     

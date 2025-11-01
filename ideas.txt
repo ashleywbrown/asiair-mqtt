@@ -1,0 +1,4 @@
+Things that annoy me and would be fixed with more support:
+
+- Implement Stellarium Telescope Protocol to allow showing and sending goto all connected telescopes
+- Act as an Alpaca bridge for, e.g. ASIAIR 

@@ -7,6 +7,8 @@ import logging
 import paho.mqtt.client as mqtt
 
 from asiair import ZwoAsiair
+from nina import Nina
+from stellarium import Stellarium
 
 logging.basicConfig(#filename="./ASIAIR_"+str(sys.argv[2])+".log",
                     #filemode="a",
@@ -30,9 +32,12 @@ async def command_router(cmd_q: asyncio.Queue):
                 payload = json.loads(payload)
             except json.JSONDecodeError:
                 payload = payload.decode() # just use the string
-            new_value = await fn(device, payload)
-            if new_value is not None:
-                component.on_publish(component, topic, new_value)
+            try:
+                new_value = await fn(device, payload)
+                if new_value is not None:
+                    component.on_publish(component, topic, new_value)
+            except NotImplementedError:
+                logging.error('Not implemented - command for "%s"', topic)
             cmd_q.task_done()
         except Exception as ex:
             logging.error(ex)
@@ -40,7 +45,10 @@ async def command_router(cmd_q: asyncio.Queue):
 async def main():
     cmd_q = asyncio.Queue()
     connections = {
-        'asiair': ZwoAsiair.create('ASIAIR', address=asiair_host)
+        'asiair': ZwoAsiair.create('ASIAIR', address=asiair_host),
+        'nina': Nina.create('NINA', host='astrobee'),
+        #'stellarium': Stellarium.create('Stellarium Mac', host='MacStudio'),
+        'planetarium': Stellarium.create('Planetarium', host='ObservatoryMiniPC')
     }
     for name, cnx in connections.items():
         # We run this sequentially as parallel connection creation
@@ -64,7 +72,8 @@ async def main():
 
     for (cnx_name, device) in all_devices:
         dv = device.get_mqtt_device_config()
-        discovery_topic = 'homeassistant/device/asiair/asiair/config' # remove hard coding
+        discovery_topic = 'homeassistant/device/astro_mqtt/{0}/config'.format(cnx_name) # remove hard coding
+        logging.debug(type(device).__name__ + ': ' + str(dv))
         components = {}
         for component in device.components():
             config = component.component_config
@@ -75,6 +84,7 @@ async def main():
                     config['topic'] = component_root_topic
                 else:
                     config[topic + '_topic'] = component_root_topic + '/' + topic
+                logging.debug('Registering: ' + type(device).__name__ + ': ' + topic)
 
             def callback(client, userdata, message, device, component, topic, fn, cmd_q):
                 logging.debug('Callback for %s %s %s %s', device.name, topic, fn, message.payload)
@@ -95,7 +105,6 @@ async def main():
             config['unique_id'] = '{0}.{1}.{2}'.format(cnx_name, device.uuid(), component.component_id)
             components[component.component_id] = config
             component.set_on_publish(lambda component, topic, payload, root_topic=component_root_topic: clientMQTT.publish(root_topic + ('' if topic == '' else '/' + topic ), payload, qos=1))
-        logging.debug(' Registering components %s', components)
         
         discovery_payload = {
             'dev': dv,
@@ -104,8 +113,9 @@ async def main():
                 'sw_version': '0.1',
                 'support_url': 'https://github.com/ashleywbrown/asiair-mqtt',
             },
-            'cmps': components            
+            'cmps': components,
         }
+        logging.debug(' Registering device %s', discovery_payload)
         clientMQTT.publish(discovery_topic, json.dumps(discovery_payload), qos=0, retain=True)
     
     polling = list(map(lambda cnx: cnx.poll(), connections.values()))

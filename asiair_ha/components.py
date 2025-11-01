@@ -3,8 +3,24 @@ from functools import partial
 import json
 import logging
 import sys
-from const import DEVICE_CLASS_SWITCH, STATE_CLASS_NONE, TYPE_BINARY_SENSOR, TYPE_CAMERA, TYPE_CLIMATE, TYPE_DEVICE_TRACKER, TYPE_SENSOR, TYPE_SWITCH, UNIT_OF_MEASUREMENT_NONE
+from const import DEVICE_CLASS_SWITCH, STATE_CLASS_NONE, TYPE_BINARY_SENSOR, TYPE_CAMERA, TYPE_CLIMATE, TYPE_DEVICE_TRACKER, TYPE_NUMBER, TYPE_SENSOR, TYPE_SWITCH, TYPE_TEXT, UNIT_OF_MEASUREMENT_NONE
 
+class MqttDevice():
+    '''Çlass decorator for a device that will be published via MQTT'''
+    def __init__(self):
+        pass
+
+    def __call__(self):
+        pass
+
+    # Read through all attributes of the class.
+    # Add fields and functions for setting the root topic.
+
+    def set_device_topic(topic: str):
+        '''Set the root topic for this device - used when publishing.'''
+
+    def publish(component_fn: function):
+        '''Publish the value of the associated function to its MQTT topic.'''
 
 def component(
         platform=TYPE_SENSOR,
@@ -23,12 +39,15 @@ def component(
             try:
                 iterable_topics = [(topic, fn) for topic, fn in state.subscription_topic_map.items()]
                 topics = [topic for topic, fn in iterable_topics ]
-                logging.debug("fetching sensor states for %s... %s", state.component_id, topics)
-                results = await asyncio.gather(*[fn(self, *args, **kwargs) for (topic, fn) in iterable_topics])
-                logging.debug("... found %d", len(results))
+                results = await asyncio.gather(
+                    *[fn(self, *args, **kwargs) for (topic, fn) in iterable_topics],
+                    return_exceptions=True)
                 for topic, result in zip(topics, results):
                     logging.error("publish %s - %s - %s", state.component_id, topic, result)
-                    if result is None:
+                    if result is None or isinstance(result, NotImplementedError):
+                        continue
+                    if isinstance(result, Exception):
+                        logging.error('Error retrieving value for %s %s', state.component_id, result)
                         continue
                     if not isinstance(result, str) and not isinstance(result, bytearray):
                         result = json.dumps(result)
@@ -98,8 +117,27 @@ def switch(
             command_template=command_template,
             **kwargs)(func)
         return state
-
     return switch
+
+def number(**kwargs):
+    def number(func):
+        state = component(
+            platform=TYPE_NUMBER,
+            command_topics=['command'],
+            **kwargs
+        )(func)
+        return state
+    return number
+
+def text(**kwargs):
+    def number(func):
+        state = component(
+            platform=TYPE_TEXT,
+            command_topics=['command'],
+            **kwargs
+        )(func)
+        return state
+    return number
 
 def climate(**kwargs):
     def climate(func):
