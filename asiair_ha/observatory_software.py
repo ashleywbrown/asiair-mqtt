@@ -16,7 +16,7 @@
 
 import logging
 from const import DEVICE_TYPE_CAMERA_ICON, STATE_CLASS_MEASUREMENT, UNIT_OF_MEASUREMENT_NONE, UNIT_OF_MEASUREMENT_PERCENTAGE, UNIT_OF_MEASUREMENT_SECONDS
-from components import camera, climate, sensor, switch
+from hass_mqtt import camera, climate, sensor, switch
 
 
 class ObservatorySoftware:

@@ -1,3 +1,5 @@
+'''Decorators to enable '''
+
 import asyncio
 from functools import partial
 import json
@@ -5,13 +7,36 @@ import logging
 import sys
 from const import DEVICE_CLASS_SWITCH, STATE_CLASS_NONE, TYPE_BINARY_SENSOR, TYPE_CAMERA, TYPE_CLIMATE, TYPE_DEVICE_TRACKER, TYPE_NUMBER, TYPE_SENSOR, TYPE_SWITCH, TYPE_TEXT, UNIT_OF_MEASUREMENT_NONE
 
-class MqttDevice():
-    '''Çlass decorator for a device that will be published via MQTT'''
-    def __init__(self):
-        pass
+def mqtt_device(**kwargs):
+    def _mqtt_device(cls):
+        return MqttDevice(cls, **kwargs)
+    return _mqtt_device
 
-    def __call__(self):
-        pass
+class MqttDevice():
+    '''Class decorator for a device that will be published via MQTT'''
+    def __init__(self, cls, **kwargs):
+        self.cls = cls
+        print('Init MqttDevice for ' + cls.__name__)
+
+    def __call__(self, *args, **kwargs):
+        cls = self.cls
+        print('Created MqttDevice for ', cls.__name__)
+        #sys.exit(0)
+
+        components = []
+        for attr_name in dir(cls):
+            method = getattr(cls, attr_name)
+            if hasattr(method, 'component_config'):
+                components.append(method)
+        cls.mqtt_components = components
+        logging.info('Class %s has %d components', cls.__name__, len(components))
+
+
+        def on_publish(self, mqtt_component, payload):
+            logging.warning('No on_publish set for class %s', cls.__name__)
+
+        cls.on_publish = on_publish
+        return cls(*args, **kwargs)
 
     # Read through all attributes of the class.
     # Add fields and functions for setting the root topic.
@@ -43,20 +68,18 @@ def component(
                     *[fn(self, *args, **kwargs) for (topic, fn) in iterable_topics],
                     return_exceptions=True)
                 for topic, result in zip(topics, results):
-                    logging.error("publish %s - %s - %s", state.component_id, topic, result)
                     if result is None or isinstance(result, NotImplementedError):
                         continue
                     if isinstance(result, Exception):
-                        logging.error('Error retrieving value for %s %s', state.component_id, result)
                         continue
                     if not isinstance(result, str) and not isinstance(result, bytearray):
                         result = json.dumps(result)
-                    state.on_publish(state, topic, result)
+                    #state.on_publish(state, topic, result)
+                    self.on_publish(state, topic, result)
             except Exception as ex:
                 logging.error(ex)
                 sys.exit(-1)
         def set_on_publish(func):
-            logging.debug("set_on_publish")
             state.on_publish = func
 
         state.publish = publish
@@ -67,7 +90,6 @@ def component(
 
         def topic_setter(func, topic_map, topic):
             topic_map[topic] = func
-            logging.error('%s', topic_map)
             return func
         
         if len(subscription_topics) > 0:

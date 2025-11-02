@@ -4,7 +4,7 @@ import aiohttp
 import asyncio
 
 from const import DEVICE_TYPE_CAMERA_ICON
-from components import climate, sensor
+from hass_mqtt import climate, mqtt_device, sensor
 from observatory_software import Camera, Device, ObservatorySoftware
 
 
@@ -51,7 +51,6 @@ class Nina(ObservatorySoftware):
         await self._get('equipment/camera/dew-heater', power=json.dumps(on))
         return on
 
-
 class NinaDevice(Device):
     def __init__(self, parent: Nina, name):
         super().__init__(parent, name)
@@ -59,6 +58,7 @@ class NinaDevice(Device):
     def uuid(self):
         return '_'.join([self.parent.host, self.parent.port, self.parent.name, self.name])
     
+@mqtt_device()
 class NinaCamera(NinaDevice, Camera):
     
     def get_mqtt_device_config(self):

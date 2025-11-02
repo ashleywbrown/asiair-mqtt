@@ -9,7 +9,7 @@ import traceback
 import aiohttp
 import numpy as np
 from numpy import arcsin, arctan2
-from components import number, text
+from hass_mqtt import MqttDevice, mqtt_device, number, text
 from observatory_software import Device, ObservatorySoftware
 
 AltAz = namedtuple('AltAz', ['alt', 'az'])
@@ -81,7 +81,8 @@ class Stellarium(ObservatorySoftware):
         if az is not None:
             altaz['az'] = np.deg2rad(180-float(az))
         await self._post('main/view', **altaz)
-    
+
+@mqtt_device()
 class Planetarium(Device):
     def __init__(self, parent: Stellarium, name):
         super().__init__(parent, name)

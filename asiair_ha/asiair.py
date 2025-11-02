@@ -7,7 +7,7 @@ import json, time
 import zipfile
 import paho.mqtt.client as mqtt
 import logging
-from components import binary_sensor, camera, climate, device_tracker, sensor, switch
+from hass_mqtt import binary_sensor, camera, climate, device_tracker, mqtt_device, sensor, switch
 from astrolive.image import ImageManipulation
 from const import (
     DEVICE_CLASS_SWITCH,
@@ -448,6 +448,7 @@ class ZwoAsiairDevice(Device):
     def uuid(self):
         return self.parent.pi_info.guid + '.' + self.name
 
+@mqtt_device()
 class ZwoAsiairPi(ZwoAsiairDevice):
     """ The ASIAIR itself. """
     def __init__(self, parent: ZwoAsiair, name):
@@ -657,7 +658,7 @@ class ZwoAsiairPi(ZwoAsiairDevice):
         input_supply = (await self.parent.get_power_supply()).input
         return input_supply[0] * input_supply[1]
 
-
+@mqtt_device()
 class Telescope(ZwoAsiairDevice):
 
     def get_mqtt_device_config(self):
@@ -759,7 +760,7 @@ class Telescope(ZwoAsiairDevice):
     async def is_slewing(self):
         return (await self.parent.scope_is_moving()) != 'none'
 
-
+@mqtt_device()
 class Focuser(ZwoAsiairDevice):
     """ The ASIAIR itself. """
     def __init__(self, parent: ZwoAsiair, name):
@@ -783,7 +784,7 @@ class Focuser(ZwoAsiairDevice):
     async def position(self):
         return await self.parent.jsonrpc_call(4700, 'get_focuser_position')
 
-
+@mqtt_device()
 class FilterWheel(ZwoAsiairDevice):
     """ The ASIAIR filter wheel. """
     def __init__(self, parent: ZwoAsiair, name):
@@ -816,7 +817,7 @@ class FilterWheel(ZwoAsiairDevice):
         else:
             return None
 
-
+@mqtt_device()
 class AsiAirCamera(ZwoAsiairDevice, Camera):
     """ The ASIAIR camera. """
     def __init__(self, parent: ZwoAsiair, name):

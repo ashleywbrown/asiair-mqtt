@@ -47,7 +47,7 @@ async def main():
     connections = {
         'asiair': ZwoAsiair.create('ASIAIR', address=asiair_host),
         'nina': Nina.create('NINA', host='astrobee'),
-        #'stellarium': Stellarium.create('Stellarium Mac', host='MacStudio'),
+        'stellarium': Stellarium.create('Stellarium Mac', host='MacStudio'),
         'planetarium': Stellarium.create('Planetarium', host='ObservatoryMiniPC')
     }
     for name, cnx in connections.items():
@@ -75,9 +75,12 @@ async def main():
         discovery_topic = 'homeassistant/device/astro_mqtt/{0}/config'.format(cnx_name) # remove hard coding
         logging.debug(type(device).__name__ + ': ' + str(dv))
         components = {}
-        for component in device.components():
+        #for component in device.components():
+        device_root_topic = '{cnx_name}/{device_name}'.format(cnx_name=cnx_name, device_name=device.name)
+
+        for component in device.mqtt_components:
             config = component.component_config
-            component_root_topic = '{cnx_name}/{device_name}/{component_id}'.format(cnx_name=cnx_name, device_name=device.name, component_id=component.component_id)
+            component_root_topic = '{device_root_topic}/{component_id}'.format(device_root_topic=device_root_topic, component_id=component.component_id)
 
             for topic in component.subscription_topic_map.keys():
                 if topic == '':
@@ -93,6 +96,7 @@ async def main():
             for topic, fn in component.command_topic_map.items():
                 command_topic = component_root_topic + '/' + topic
                 config[topic + '_topic'] = command_topic
+                logging.info('Subscribing to %s for %s', command_topic, component.component_id)
 
                 clientMQTT.subscribe(command_topic)
                 topic_callback = partial(callback, device=device, component=component, topic=command_topic, fn=fn, cmd_q=cmd_q)
@@ -104,7 +108,11 @@ async def main():
             
             config['unique_id'] = '{0}.{1}.{2}'.format(cnx_name, device.uuid(), component.component_id)
             components[component.component_id] = config
-            component.set_on_publish(lambda component, topic, payload, root_topic=component_root_topic: clientMQTT.publish(root_topic + ('' if topic == '' else '/' + topic ), payload, qos=1))
+            #component.set_on_publish(lambda component, topic, payload, root_topic=component_root_topic: clientMQTT.publish(root_topic + ('' if topic == '' else '/' + topic ), payload, qos=1))
+        
+        def on_publish(mqtt_component, topic, payload, device_root_topic):
+            clientMQTT.publish(device_root_topic + '/' + mqtt_component.component_id + ('' if topic == '' else '/' + topic ), payload, qos=1)
+        device.on_publish = partial(on_publish, device_root_topic=device_root_topic)
         
         discovery_payload = {
             'dev': dv,
