@@ -15,8 +15,8 @@
 # sending multiple updates.
 
 import logging
-from const import DEVICE_TYPE_CAMERA_ICON, STATE_CLASS_MEASUREMENT, UNIT_OF_MEASUREMENT_NONE, UNIT_OF_MEASUREMENT_PERCENTAGE, UNIT_OF_MEASUREMENT_SECONDS
-from hass_mqtt import camera, climate, sensor, switch
+from const import DEVICE_TYPE_CAMERA_ICON, DEVICE_TYPE_FILTERWHEEL_ICON, DEVICE_TYPE_TELESCOPE_ICON, STATE_CLASS_MEASUREMENT, UNIT_OF_MEASUREMENT_DEGREE, UNIT_OF_MEASUREMENT_NONE, UNIT_OF_MEASUREMENT_PERCENTAGE, UNIT_OF_MEASUREMENT_SECONDS
+from hass_mqtt import camera, climate, device_tracker, sensor, switch
 
 
 class ObservatorySoftware:
@@ -179,4 +179,121 @@ class Camera(Device):
 
     @cooling.action
     async def cooling_action(self):
+        raise NotImplementedError
+
+class Telescope(Device):
+    @sensor(
+        name="Altitude",
+        unit_of_measurement=UNIT_OF_MEASUREMENT_DEGREE,
+        icon=DEVICE_TYPE_TELESCOPE_ICON,
+        state_class=STATE_CLASS_MEASUREMENT,
+        suggested_display_precision=3,
+    ) 
+    async def altitude(self):
+        return await self._altitude()
+    
+    async def _altitude(self):
+        raise NotImplementedError
+    
+    @sensor(
+        name="Azimuth",
+        unit_of_measurement=UNIT_OF_MEASUREMENT_DEGREE,
+        icon=DEVICE_TYPE_TELESCOPE_ICON,
+        state_class=STATE_CLASS_MEASUREMENT,
+        suggested_display_precision=3,
+    ) 
+    async def azimuth(self):
+        return await self._azimuth()
+    
+    async def _azimuth(self):
+        raise NotImplementedError
+
+    @sensor(
+        name="Right Ascension",
+        unit_of_measurement=UNIT_OF_MEASUREMENT_DEGREE,
+        icon=DEVICE_TYPE_TELESCOPE_ICON,
+        state_class=STATE_CLASS_MEASUREMENT,
+        suggested_display_precision=3,
+    ) 
+    async def right_ascension(self):
+        return await self._right_ascension()
+    
+    async def _right_ascension(self):
+        raise NotImplementedError
+    
+    @sensor(
+        name="Declination",
+        unit_of_measurement=UNIT_OF_MEASUREMENT_DEGREE,
+        icon=DEVICE_TYPE_TELESCOPE_ICON,
+        state_class=STATE_CLASS_MEASUREMENT,
+        suggested_display_precision=3,
+    ) 
+    async def declination(self):
+        return await self._declination()
+    
+    async def _declination(self):
+        raise NotImplementedError
+    
+    @sensor(
+        name="Track Mode",
+        icon=DEVICE_TYPE_TELESCOPE_ICON,
+    ) 
+    async def track_mode(self):
+        return await self._track_mode()
+    
+    async def _track_mode(self):
+        raise NotImplementedError
+    
+    @switch(
+        name="Tracking",
+        icon=DEVICE_TYPE_TELESCOPE_ICON,
+    ) 
+    async def tracking(self):
+        return await self._tracking()
+    
+    @tracking.command
+    async def set_tracking(self, on: bool):
+        return await self._set_tracking(on)
+    
+    @tracking.json_attributes
+    async def tracking_attributes(self):
+        return await self._tracking_attributes()
+
+    async def _tracking(self):
+        raise NotImplementedError
+    
+    async def _set_tracking(self):
+        raise NotImplementedError
+    
+    async def _tracking_attributes(self):
+        return {
+            'Mode': await self._track_mode()
+        }
+    
+    @device_tracker(
+        name='Site Location',
+        icon=DEVICE_TYPE_TELESCOPE_ICON,
+        subscription_topics=['json_attributes'],
+    )
+    async def site_location(self):
+        location = self._site_latlon()
+        return {
+            'latitude': location[0],
+            'longitude': location[1],
+        }
+    
+    async def _site_latlon(self):
+        raise NotImplementedError
+
+class FilterWheel(Device):
+    @sensor(
+        name="Current",
+        unit_of_measurement=UNIT_OF_MEASUREMENT_NONE,
+        icon=DEVICE_TYPE_FILTERWHEEL_ICON,
+        unique_id='1236qw345h6'
+    ) 
+    async def current(self):
+        return await self._current()
+    
+    async def _current(self):
         raise NotImplementedError

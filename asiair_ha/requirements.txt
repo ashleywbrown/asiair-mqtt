@@ -2,3 +2,5 @@ astropy
 numpy
 requests
 aiohttp
+cachetools
+cachetools_async

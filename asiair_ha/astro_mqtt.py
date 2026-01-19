@@ -4,6 +4,7 @@ from functools import partial
 import json
 import sys
 import logging
+import traceback
 import paho.mqtt.client as mqtt
 
 from asiair import ZwoAsiair
@@ -35,20 +36,20 @@ async def command_router(cmd_q: asyncio.Queue):
             try:
                 new_value = await fn(device, payload)
                 if new_value is not None:
-                    component.on_publish(component, topic, new_value)
+                    device.on_publish(component, topic, new_value)
             except NotImplementedError:
                 logging.error('Not implemented - command for "%s"', topic)
             cmd_q.task_done()
         except Exception as ex:
-            logging.error(ex)
+            logging.error(traceback.format_exc())
 
 async def main():
     cmd_q = asyncio.Queue()
     connections = {
         'asiair': ZwoAsiair.create('ASIAIR', address=asiair_host),
         'nina': Nina.create('NINA', host='astrobee'),
-        'stellarium': Stellarium.create('Stellarium Mac', host='MacStudio'),
-        'planetarium': Stellarium.create('Planetarium', host='ObservatoryMiniPC')
+#        'stellarium': Stellarium.create('Stellarium Mac', host='MacStudio'),
+#        'planetarium': Stellarium.create('Planetarium', host='ObservatoryMiniPC')
     }
     for name, cnx in connections.items():
         # We run this sequentially as parallel connection creation

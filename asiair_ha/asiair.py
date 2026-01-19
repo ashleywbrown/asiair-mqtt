@@ -5,9 +5,12 @@ import sys
 import tempfile
 import json, time
 import zipfile
+from cachetools import TTLCache
+from cachetools_async import cached
 import paho.mqtt.client as mqtt
 import logging
 from hass_mqtt import binary_sensor, camera, climate, device_tracker, mqtt_device, sensor, switch
+from observatory_software import Telescope
 from astrolive.image import ImageManipulation
 from const import (
     DEVICE_CLASS_SWITCH,
@@ -233,6 +236,7 @@ class ZwoAsiair(ObservatorySoftware):
             return NotImplementedError
         await cmd_q.put((command, args))
 
+    @cached(cache=TTLCache(maxsize=30, ttl=10))
     async def jsonrpc_call(self, port: int, command: str, *args):
         if port == 4400:
             cmd_q = self.cmd_q_4400
@@ -659,7 +663,7 @@ class ZwoAsiairPi(ZwoAsiairDevice):
         return input_supply[0] * input_supply[1]
 
 @mqtt_device()
-class Telescope(ZwoAsiairDevice):
+class Telescope(ZwoAsiairDevice, Telescope):
 
     def get_mqtt_device_config(self):
         pi_info = self.parent.pi_info
@@ -671,40 +675,16 @@ class Telescope(ZwoAsiairDevice):
             'suggested_area': 'Observatory',
         }
     
-    @sensor(
-        name="Altitude",
-        unit_of_measurement=UNIT_OF_MEASUREMENT_DEGREE,
-        icon=DEVICE_TYPE_TELESCOPE_ICON,
-        state_class=STATE_CLASS_MEASUREMENT,
-    ) 
-    async def altitude(self):
+    async def _altitude(self):
         return (await self.parent.scope_get_horiz_coord())[0]
     
-    @sensor(
-        name="Azimuth",
-        unit_of_measurement=UNIT_OF_MEASUREMENT_DEGREE,
-        icon=DEVICE_TYPE_TELESCOPE_ICON,
-        state_class=STATE_CLASS_MEASUREMENT,
-    ) 
-    async def azimuth(self):
+    async def _azimuth(self):
         return (await self.parent.scope_get_horiz_coord())[1]
     
-    @sensor(
-        name="Right Ascension",
-        unit_of_measurement=UNIT_OF_MEASUREMENT_DEGREE,
-        icon=DEVICE_TYPE_TELESCOPE_ICON,
-        state_class=STATE_CLASS_MEASUREMENT,
-    ) 
-    async def right_ascension(self):
+    async def _right_ascension(self):
         return (await self.parent.scope_get_ra_dec())[0]
     
-    @sensor(
-        name="Declination",
-        unit_of_measurement=UNIT_OF_MEASUREMENT_DEGREE,
-        icon=DEVICE_TYPE_TELESCOPE_ICON,
-        state_class=STATE_CLASS_MEASUREMENT,
-    ) 
-    async def declination(self):
+    async def _declination(self):
         return (await self.parent.scope_get_ra_dec())[1]
     
     @sensor(
@@ -876,15 +856,15 @@ class AsiAirCamera(ZwoAsiairDevice, Camera):
     async def exposure_seconds(self):
         return await self.parent.get_control_value('Exposure') / (1000*1000)
 
-    @switch(
-        name='Dew Heater',
-        icon='mdi:heating-coil',
-    ) 
-    async def dewheater(self):
+    #@switch(
+    #    name='Dew Heater',
+    #    icon='mdi:heating-coil',
+    #) 
+    async def _dewheater(self):
         return bool(await self.parent.get_control_value('AntiDewHeater'))
 
-    @dewheater.command
-    async def set_dewheater(self, value):
+    #@dewheater.command
+    async def _set_dewheater(self, value):
         error_code = await self.parent.jsonrpc_call(4700, 'set_control_value', 'AntiDewHeater', int(value))
         if error_code == 0:
             return value # return the latest value for publication.
