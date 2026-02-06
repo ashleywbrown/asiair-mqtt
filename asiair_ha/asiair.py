@@ -3,36 +3,26 @@ from collections import namedtuple
 import struct
 import sys
 import tempfile
-import json, time
+import json
 import zipfile
 from cachetools import TTLCache
 from cachetools_async import cached
-import paho.mqtt.client as mqtt
 import logging
-from hass_mqtt import binary_sensor, camera, climate, device_tracker, mqtt_device, sensor, switch
-from observatory_software import Telescope
+from hass_mqtt import binary_sensor, mqtt_device, sensor
 from astrolive.image import ImageManipulation
 from const import (
-    DEVICE_CLASS_SWITCH,
     DEVICE_TYPE_CAMERA_ICON,
-    DEVICE_TYPE_FILTERWHEEL_ICON,
     DEVICE_TYPE_FOCUSER_ICON,
     DEVICE_TYPE_TELESCOPE_ICON,
-    STATE_CLASS_MEASUREMENT,
-    STATE_CLASS_NONE,
-    UNIT_OF_MEASUREMENT_DEGREE,
     UNIT_OF_MEASUREMENT_NONE,
-    UNIT_OF_MEASUREMENT_PERCENTAGE,
-    UNIT_OF_MEASUREMENT_SECONDS,
     UNIT_OF_MEASUREMENT_TEMP_CELSIUS,
-    UNIT_OF_MEASUREMENT_VOLTAGE,
 )
 import jsonrpc
 
 
 import cv2
 import numpy as np
-from observatory_software import Camera, Device, ObservatorySoftware
+from observatory_software import Camera, Device, FilterWheel, ObservatorySoftware, Telescope
 
 # Commands to interrogate the system:
 # https://www.cloudynights.com/topic/900861-seestar-s50asiair-jailbreak-ssh/page-4
@@ -696,42 +686,18 @@ class Telescope(ZwoAsiairDevice, Telescope):
     async def pier_side(self):
         return await self.parent.scope_get_pierside()
 
-    @sensor(
-        name="Track Mode",
-        icon=DEVICE_TYPE_TELESCOPE_ICON,
-    ) 
-    async def track_mode(self):
+    async def _track_mode(self):
         track_mode = await self.parent.scope_get_track_mode()
         return track_mode.list[track_mode.index]
 
-    @switch(
-        name="Tracking",
-        icon=DEVICE_TYPE_TELESCOPE_ICON,
-    ) 
-    async def tracking(self):
+    async def _tracking(self):
         return await self.parent.scope_get_track_state()
     
-    @tracking.command
-    async def set_tracking(self, on: bool):
+    async def _set_tracking(self, on: bool):
         return await self.parent.scope_set_track_state(on)
     
-    @tracking.json_attributes
-    async def tracking_attributes(self):
-        return {
-            'Mode': await self.track_mode()
-        }
-
-    @device_tracker(
-        name='Site Location',
-        icon=DEVICE_TYPE_TELESCOPE_ICON,
-        subscription_topics=['json_attributes'],
-    )
-    async def site_location(self):
-        location = await self.parent.scope_get_location()
-        return {
-            'latitude': location[0],
-            'longitude': location[1],
-        }
+    async def _site_latlon(self):
+        return await self.parent.scope_get_location()
     
     @binary_sensor(
         name='Slewing',
@@ -765,7 +731,7 @@ class Focuser(ZwoAsiairDevice):
         return await self.parent.jsonrpc_call(4700, 'get_focuser_position')
 
 @mqtt_device()
-class FilterWheel(ZwoAsiairDevice):
+class FilterWheel(ZwoAsiairDevice, FilterWheel):
     """ The ASIAIR filter wheel. """
     def __init__(self, parent: ZwoAsiair, name):
         self.wheel_names = []
@@ -781,13 +747,7 @@ class FilterWheel(ZwoAsiairDevice):
             'suggested_area': 'Observatory',
         }
     
-    @sensor(
-        name="Current",
-        unit_of_measurement=UNIT_OF_MEASUREMENT_NONE,
-        icon=DEVICE_TYPE_FILTERWHEEL_ICON,
-        unique_id='1236qw345h6'
-    ) 
-    async def current(self):
+    async def _current(self):
         (self.wheel_names, position) = await asyncio.gather(
             self.parent.jsonrpc_call(4700, 'get_wheel_slot_name'),
             self.parent.jsonrpc_call(4700, 'get_wheel_position')
@@ -815,12 +775,7 @@ class AsiAirCamera(ZwoAsiairDevice, Camera):
             'suggested_area': 'Observatory',
         }
 
-    @camera(
-        name="Latest Image",
-        unit_of_measurement=UNIT_OF_MEASUREMENT_NONE,
-        icon=DEVICE_TYPE_CAMERA_ICON,
-    ) 
-    async def image(self):
+    async def _image(self):
         return self.latest_image
 
     async def _device_name(self):
@@ -838,22 +793,10 @@ class AsiAirCamera(ZwoAsiairDevice, Camera):
         logging.debug('Got Cooler Power')
         return await self.parent.get_control_value('CoolPowerPerc')
     
-    @sensor(
-        name="Gain",
-        unit_of_measurement=UNIT_OF_MEASUREMENT_NONE,
-        icon=DEVICE_TYPE_CAMERA_ICON,
-        state_class=STATE_CLASS_MEASUREMENT,
-    ) 
-    async def gain(self):
+    async def _gain(self):
         return await self.parent.get_control_value('Gain')
     
-    @sensor(
-        name="Exposure",
-        unit_of_measurement=UNIT_OF_MEASUREMENT_SECONDS,
-        icon=DEVICE_TYPE_CAMERA_ICON,
-        state_class=STATE_CLASS_MEASUREMENT,
-    ) 
-    async def exposure_seconds(self):
+    async def _exposure_seconds(self):
         return await self.parent.get_control_value('Exposure') / (1000*1000)
 
     #@switch(
@@ -871,40 +814,25 @@ class AsiAirCamera(ZwoAsiairDevice, Camera):
         else:
             raise RuntimeError("Non-zero exit code for " + function.__name__)
 
-    @climate(
-        name='Cooling',
-        temperature_unit='C',
-        icon='mdi:snowflake',
-        max_temp=40,
-        min_temp=-40,
-        modes=['off', 'cool'],
-        action_template='{% if value_json == 0 %}off{% else %}cooling{% endif %}',
-        )
-    async def cooling(self):
+    async def _cooling_current_temperature(self):
         return self.sensor_temperature
 
-    @cooling.temperature_state
-    async def get_cooling_temperature(self):
+    async def _cooling_target_temperature(self):
         return await self.parent.get_control_value('TargetTemp')
 
-    @cooling.temperature_command
-    async def set_cooling_temperature(self, temp):
+    async def _set_cooling_target_temperature(self, temp):
         return await self.parent.set_control_value('TargetTemp', temp)
 
-    @cooling.mode_state
-    async def cooling_mode(self):
+    async def _cooling_mode(self):
         return 'cool' if bool(await self.parent.get_control_value('CoolerOn')) else 'off'
 
-    @cooling.mode_command
-    async def set_cooling_mode(self, mode: str):
+    async def _set_cooling_mode(self, mode: str):
         logging.error('Cooling mode %s', mode)
         await self.parent.set_control_value('CoolerOn', 1 if mode != 'off' else 0)
         return mode
 
-    @cooling.power_command
-    async def cooling_power(self, onoff: str):
+    async def _set_cooling_power(self, onoff: str):
         await self.parent.set_control_value('CoolerOn', int(onoff != 'OFF'))
 
-    @cooling.action
-    async def cooling_action(self):
+    async def _cooling_action(self):
         return await self.parent.get_control_value('CoolPowerPerc')

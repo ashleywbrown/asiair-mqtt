@@ -4,7 +4,7 @@ import aiohttp
 import asyncio
 
 from const import DEVICE_TYPE_CAMERA_ICON
-from hass_mqtt import climate, mqtt_device, sensor
+from hass_mqtt import mqtt_device
 from observatory_software import Camera, Device, FilterWheel, ObservatorySoftware, Telescope
 from cachetools import TTLCache
 from cachetools_async import cached
@@ -118,46 +118,27 @@ class NinaCamera(NinaDevice, Camera):
     async def _gain(self):
         return await self.fetch_value('Gain')
 
-
-    @climate(
-        name='Cooling',
-        temperature_unit='C',
-        icon='mdi:snowflake',
-        max_temp=40,
-        min_temp=-40,
-        modes=['off', 'cool'],
-        action_template='{% if value_json == 0 %}off{% else %}cooling{% endif %}',
-        )
-    async def cooling(self):
+    async def _cooling_current_temperature(self):
         return await self.fetch_value('Temperature')
 
-    @cooling.temperature_state
-    async def get_cooling_temperature(self):
+    async def _cooling_target_temperature(self):
         return await self.fetch_value('TargetTemp')
 
-    @cooling.temperature_command
-    async def set_cooling_temperature(self, temp):
+    async def _set_cooling_target_temperature(self, temp):
         raise NotImplementedError
 
-    @cooling.mode_state
-    async def cooling_mode(self):
+    async def _cooling_mode(self):
         return 'cool' if await self.fetch_value('CoolerOn') else 'off'
 
-    @cooling.mode_command
-    async def set_cooling_mode(self, mode: str):
+    async def _set_cooling_mode(self, mode: str):
         await self.parent.set_cooling(mode != 'off')
         return mode
 
-    @cooling.power_command
-    async def cooling_power(self, onoff: str):
+    async def _set_cooling_power(self, onoff: str):
         raise NotImplementedError
 
-    @cooling.action
-    async def cooling_action(self):
+    async def _cooling_action(self):
         return 'cooling' if (await self.fetch_value('CoolerPower')) > 0 else 'off'
-
-    async def _gain(self):
-        return (await self.parent.get_camera_info())['Gain']
     
 
 @mqtt_device()

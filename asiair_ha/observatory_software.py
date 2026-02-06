@@ -81,6 +81,9 @@ class Camera(Device):
         icon=DEVICE_TYPE_CAMERA_ICON,
     ) 
     async def image(self):
+        return await self._image()
+    
+    async def _image(self):
         raise NotImplementedError
 
     @sensor(
@@ -126,6 +129,9 @@ class Camera(Device):
         state_class=STATE_CLASS_MEASUREMENT,
     ) 
     async def exposure_seconds(self):
+        return await self._exposure_seconds()
+    
+    async def _exposure_seconds(self):
         raise NotImplementedError
 
     @switch(
@@ -155,30 +161,51 @@ class Camera(Device):
         action_template='{% if value_json == 0 %}off{% else %}cooling{% endif %}',
         )
     async def cooling(self):
+        return await self._cooling_current_temperature()
+    
+    async def _cooling_current_temperature(self):
         raise NotImplementedError
 
     @cooling.temperature_state
     async def get_cooling_temperature(self):
+        return await self._cooling_target_temperature()
+    
+    async def _cooling_target_temperature(self):
         raise NotImplementedError
 
     @cooling.temperature_command
     async def set_cooling_temperature(self, temp):
+        return await self._set_cooling_target_temperature(temp)
+    
+    async def _set_cooling_target_temperature(self, temp):
         raise NotImplementedError
 
     @cooling.mode_state
     async def cooling_mode(self):
+        return await self._cooling_mode()
+    
+    async def _cooling_mode(self):
         raise NotImplementedError
 
     @cooling.mode_command
     async def set_cooling_mode(self, mode: str):
+        return await self._set_cooling_mode(mode)
+    
+    async def _set_cooling_mode(self, mode: str):
         raise NotImplementedError
 
     @cooling.power_command
     async def cooling_power(self, onoff: str):
+        return await self._set_cooling_power(onoff)
+    
+    async def _set_cooling_power(self, onoff: str):
         raise NotImplementedError
 
     @cooling.action
     async def cooling_action(self):
+        return await self._cooling_action()
+    
+    async def _cooling_action(self):
         raise NotImplementedError
 
 class Telescope(Device):
@@ -276,7 +303,7 @@ class Telescope(Device):
         subscription_topics=['json_attributes'],
     )
     async def site_location(self):
-        location = self._site_latlon()
+        location = await self._site_latlon()
         return {
             'latitude': location[0],
             'longitude': location[1],
