@@ -31,7 +31,7 @@ class Nina(ObservatorySoftware):
         asyncio.create_task(self.listen_websocket())
 
     async def listen_websocket(self):
-        url = 'ws://{0}:{1}/v2'.format(self.host, self.port)
+        url = 'ws://{0}:{1}/v2/socket'.format(self.host, self.port)
         while True:
             try:
                 logging.info("Connecting to NINA WebSocket: %s", url)
@@ -163,7 +163,8 @@ class NinaCamera(NinaDevice, Camera):
         return await self.fetch_value('DewHeaterOn')
 
     async def _set_dewheater(self, on):
-        return await self.parent.set_dewheater(on)
+        await self.parent.set_dewheater(on)
+        await self.update_property('dewheater', on, source='push')
     
     async def _gain(self):
         return await self.fetch_value('Gain')
@@ -182,7 +183,7 @@ class NinaCamera(NinaDevice, Camera):
 
     async def _set_cooling_mode(self, mode: str):
         await self.parent.set_cooling(mode != 'off')
-        return mode
+        await self.update_property('cooling_mode', mode, source='push')
 
     async def _set_cooling_power(self, onoff: str):
         raise NotImplementedError
@@ -234,7 +235,8 @@ class NinaTelescope(NinaDevice, Telescope):
         return False
     
     async def _set_tracking(self, on: bool):
-        return await self.parent.set_tracking(on)
+        await self.parent.set_tracking(on)
+        await self.update_property('tracking', on, source='push')
   
     async def _track_mode(self):
         info = await self.parent.get_mount_info()
