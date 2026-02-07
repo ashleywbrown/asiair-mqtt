@@ -16,7 +16,7 @@
 
 import logging
 import time
-from const import DEVICE_TYPE_CAMERA_ICON, DEVICE_TYPE_FILTERWHEEL_ICON, DEVICE_TYPE_TELESCOPE_ICON, STATE_CLASS_MEASUREMENT, UNIT_OF_MEASUREMENT_DEGREE, UNIT_OF_MEASUREMENT_NONE, UNIT_OF_MEASUREMENT_PERCENTAGE, UNIT_OF_MEASUREMENT_SECONDS
+from const import DEVICE_TYPE_CAMERA_ICON, DEVICE_TYPE_FILTERWHEEL_ICON, DEVICE_TYPE_GUIDER_ICON, DEVICE_TYPE_TELESCOPE_ICON, STATE_CLASS_MEASUREMENT, UNIT_OF_MEASUREMENT_DEGREE, UNIT_OF_MEASUREMENT_NONE, UNIT_OF_MEASUREMENT_PERCENTAGE, UNIT_OF_MEASUREMENT_SECONDS
 from hass_mqtt import camera, climate, device_tracker, sensor, switch
 
 
@@ -387,3 +387,47 @@ class FilterWheel(Device):
 
     async def fetch_data(self):
         await self._try_fetch('current', self._current)
+
+class Guider(Device):
+    @sensor(
+        name="Star Mass",
+        icon=DEVICE_TYPE_GUIDER_ICON,
+        state_class=STATE_CLASS_MEASUREMENT,
+    )
+    async def star_mass(self):
+        return self.get_property('star_mass')
+
+    @sensor(
+        name="SNR",
+        icon=DEVICE_TYPE_GUIDER_ICON,
+        state_class=STATE_CLASS_MEASUREMENT,
+    )
+    async def snr(self):
+        return self.get_property('snr')
+
+    @sensor(
+        name="RA Error",
+        icon=DEVICE_TYPE_GUIDER_ICON,
+        state_class=STATE_CLASS_MEASUREMENT,
+        suggested_display_precision=2,
+    )
+    async def ra_distance(self):
+        return self.get_property('ra_distance')
+
+    @sensor(
+        name="DEC Error",
+        icon=DEVICE_TYPE_GUIDER_ICON,
+        state_class=STATE_CLASS_MEASUREMENT,
+        suggested_display_precision=2,
+    )
+    async def dec_distance(self):
+        return self.get_property('dec_distance')
+
+    @sensor(
+        name="Total Error",
+        icon=DEVICE_TYPE_GUIDER_ICON,
+        state_class=STATE_CLASS_MEASUREMENT,
+        suggested_display_precision=2,
+    )
+    async def total_distance(self):
+        return self.get_property('total_distance')

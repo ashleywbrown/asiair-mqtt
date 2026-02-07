@@ -22,7 +22,7 @@ import jsonrpc
 
 import cv2
 import numpy as np
-from observatory_software import Camera, Device, FilterWheel, ObservatorySoftware, Telescope
+from observatory_software import Camera, Device, FilterWheel, Guider, ObservatorySoftware, Telescope
 
 # Commands to interrogate the system:
 # https://www.cloudynights.com/topic/900861-seestar-s50asiair-jailbreak-ssh/page-4
@@ -148,6 +148,7 @@ class ZwoAsiair(ObservatorySoftware):
             'efw': FilterWheel(self, 'efw'),
             'camera': AsiAirCamera(self, 'camera'),
             'telescope': Telescope(self, 'telescope'),
+            'guider': AsiAirGuider(self, 'guider'),
         }
         super().__init__(name)
 
@@ -289,6 +290,7 @@ class ZwoAsiair(ObservatorySoftware):
         efw = self.devices['efw']
         asiair = self.devices['asiair']
         telescope = self.devices['telescope']
+        guider = self.devices['guider']
         if event == "Exposure":
             if payload["state"] == "complete":
                 self.image_available.set()
@@ -311,6 +313,12 @@ class ZwoAsiair(ObservatorySoftware):
             await camera.fetch_data()
         elif event == "ScopeTrack":
             await self.update_q.put({'method': 'scope_get_track_state', 'code': 0, 'result': payload["state"] == "on"})
+        elif event == "GuideStep":
+            await guider.update_property('star_mass', payload.get('StarMass'), source='push')
+            await guider.update_property('snr', payload.get('SNR'), source='push')
+            await guider.update_property('ra_distance', payload.get('RADistanceRaw'), source='push')
+            await guider.update_property('dec_distance', payload.get('DECDistanceRaw'), source='push')
+            await guider.update_property('total_distance', payload.get('AvgDist'), source='push')
 
 
     async def read_events(self, cmd_q, port: int):
@@ -818,3 +826,16 @@ class AsiAirCamera(ZwoAsiairDevice, Camera):
 
     async def _cooling_action(self):
         return await self.parent.get_control_value('CoolPowerPerc')
+
+@mqtt_device()
+class AsiAirGuider(ZwoAsiairDevice, Guider):
+    """ The ASIAIR Guider. """
+    def get_mqtt_device_config(self):
+        pi_info = self.parent.pi_info
+        return {
+            'name': 'ZWO ASIAIR - Guider',
+            'model': 'Guider',
+            'manufacturer': 'Suzhou ZWO Co., Ltd',
+            'identifiers': [pi_info.guid + '_guider'],
+            'suggested_area': 'Observatory',
+        }
