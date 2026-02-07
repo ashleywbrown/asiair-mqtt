@@ -6,7 +6,7 @@ import re
 
 from const import DEVICE_TYPE_CAMERA_ICON
 from hass_mqtt import mqtt_device, number, sensor, switch
-from observatory_software import Camera, Device, FilterWheel, ObservatorySoftware, Telescope
+from observatory_software import Camera, Device, FilterWheel, Guider, ObservatorySoftware, Telescope
 from cachetools import TTLCache
 from cachetools_async import cached
 
@@ -19,6 +19,7 @@ class Nina(ObservatorySoftware):
             'camera': NinaCamera(self, 'camera'),
             'telescope': NinaTelescope(self, 'telescope'),
             'filterwheel': NinaFilterWheel(self, 'filterwheel'),
+            'guider': NinaGuider(self, 'guider'),
         }
         super().__init__(name)
 
@@ -192,7 +193,7 @@ class Nina(ObservatorySoftware):
             #print("Status:", response.status)
             #print("Content-type:", response.headers['content-type'])
             json = await response.json()
-            print(json)
+            #print(json)
             return json['Response']
 
     async def get_camera_info(self):
@@ -203,6 +204,9 @@ class Nina(ObservatorySoftware):
     
     async def get_fw_info(self):
         return await self._poll('equipment/filterwheel/info')
+
+    async def get_guider_info(self):
+        return await self._poll('equipment/guider/info')
 
     async def get_switch_info(self):
         return await self._poll('equipment/switch/info')
@@ -363,3 +367,36 @@ class NinaFilterWheel(NinaDevice, FilterWheel):
     
     async def _current(self):
         return (await self.parent.get_fw_info())['SelectedFilter']['Name']
+
+@mqtt_device()
+class NinaGuider(NinaDevice, Guider):
+    
+    def get_mqtt_device_config(self):
+        return {
+            'name': 'NINA ({0}:{1}) - Guider'.format(self.parent.host, self.parent.port),
+            'model': 'Guider',
+            'manufacturer': 'NINA',
+            'identifiers': [self.uuid()],
+            'suggested_area': 'Observatory',
+        }
+
+    async def fetch_data(self):
+        info = await self.parent.get_guider_info()
+        if not isinstance(info, dict):
+            return
+
+        rms = info.get('RMSError')
+        if isinstance(rms, dict):
+            ra = rms.get('RA')
+            if isinstance(ra, dict):
+                await self.update_property('ra_distance', ra.get('Arcseconds'))
+            
+            dec = rms.get('Dec')
+            if isinstance(dec, dict):
+                await self.update_property('dec_distance', dec.get('Arcseconds'))
+            
+            total = rms.get('Total')
+            if isinstance(total, dict):
+                await self.update_property('total_distance', total.get('Arcseconds'))
+        
+        # Star Mass and SNR are not available in this endpoint
