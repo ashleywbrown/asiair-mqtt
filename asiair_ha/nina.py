@@ -28,6 +28,57 @@ class Nina(ObservatorySoftware):
 
     async def connect(self):
         self.session = aiohttp.ClientSession('http://{0}:{1}/v2/api/'.format(self.host, self.port))
+        asyncio.create_task(self.listen_websocket())
+
+    async def listen_websocket(self):
+        url = 'ws://{0}:{1}/v2'.format(self.host, self.port)
+        while True:
+            try:
+                logging.info("Connecting to NINA WebSocket: %s", url)
+                async with self.session.ws_connect(url) as ws:
+                    logging.info("Connected to NINA WebSocket")
+                    async for msg in ws:
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            logging.debug("NINA WS Message: %s", msg.data)
+                            try:
+                                data = json.loads(msg.data)
+                                await self.handle_message(data)
+                            except Exception as e:
+                                logging.error("Error handling NINA message: %s", e)
+                        elif msg.type == aiohttp.WSMsgType.ERROR:
+                            logging.error("NINA WebSocket connection closed with error %s", ws.exception())
+                            break
+            except Exception as e:
+                logging.error("NINA WebSocket error: %s", e)
+            
+            await asyncio.sleep(5)
+
+    async def handle_message(self, data):
+        logging.debug("NINA Handle Message: %s", data)
+        response = data.get('Response')
+        
+        if not isinstance(response, dict):
+            return
+
+        evt_type = response.get('Event')
+        
+        if not evt_type:
+            return
+
+        if evt_type == 'FILTERWHEEL-CHANGED':
+            fw = self.devices['filterwheel']
+            new_filter = response.get('New')
+            if new_filter and 'Name' in new_filter:
+                await fw.update_property('current', new_filter['Name'], source='push')
+
+        elif evt_type == 'IMAGE-SAVE':
+            camera = self.devices['camera']
+            stats = response.get('ImageStatistics')
+            if stats:
+                if 'Gain' in stats:
+                    await camera.update_property('gain', stats['Gain'], source='push')
+                if 'Temperature' in stats:
+                    await camera.update_property('cooling', stats['Temperature'], source='push')
 
     async def discover(self):
         return self.devices
@@ -35,8 +86,7 @@ class Nina(ObservatorySoftware):
     async def poll(self):
         while True:
             for device in self.devices.values():
-                for component in device.components():
-                    await component.publish(device)
+                await device.fetch_data()
             await asyncio.sleep(20)
     
     @cached(cache=TTLCache(maxsize=30, ttl=10))
@@ -45,11 +95,11 @@ class Nina(ObservatorySoftware):
 
     async def _get(self, path, **kwargs):
         async with self.session.get(path, params=kwargs) as response:
-            print(response)
-            print("Status:", response.status)
-            print("Content-type:", response.headers['content-type'])
+            #print(response)
+            #print("Status:", response.status)
+            #print("Content-type:", response.headers['content-type'])
             json = await response.json()
-            print(json)
+            #print(json)
             return json['Response']
 
     async def get_camera_info(self):
@@ -154,29 +204,49 @@ class NinaTelescope(NinaDevice, Telescope):
         }
 
     async def _altitude(self):
-        return (await self.parent.get_mount_info())['Altitude']
+        info = await self.parent.get_mount_info()
+        if isinstance(info, dict):
+            return info.get('Altitude')
+        return None
     
     async def _azimuth(self):
-        return (await self.parent.get_mount_info())['Azimuth']
+        info = await self.parent.get_mount_info()
+        if isinstance(info, dict):
+            return info.get('Azimuth')
+        return None
     
     async def _right_ascension(self):
-        return (await self.parent.get_mount_info())['RightAscension']
+        info = await self.parent.get_mount_info()
+        if isinstance(info, dict):
+            return info.get('RightAscension')
+        return None
     
     async def _declination(self):
-        return (await self.parent.get_mount_info())['Declination']
+        info = await self.parent.get_mount_info()
+        if isinstance(info, dict):
+            return info.get('Declination')
+        return None
     
     async def _tracking(self):
-        return (await self.parent.get_mount_info())['TrackingEnabled']
+        info = await self.parent.get_mount_info()
+        if isinstance(info, dict):
+            return info.get('TrackingEnabled')
+        return False
     
     async def _set_tracking(self, on: bool):
         return await self.parent.set_tracking(on)
   
     async def _track_mode(self):
-        return (await self.parent.get_mount_info()).get('TrackingMode', '-')
+        info = await self.parent.get_mount_info()
+        if isinstance(info, dict):
+            return info.get('TrackingMode', '-')
+        return '-'
     
     async def _site_latlon(self):
-        info = (await self.parent.get_mount_info())
-        return (info['SiteLatitude'], info['SiteLongitude'])
+        info = await self.parent.get_mount_info()
+        if isinstance(info, dict):
+            return (info.get('SiteLatitude', 0), info.get('SiteLongitude', 0))
+        return (0, 0)
     
 @mqtt_device()
 class NinaFilterWheel(NinaDevice, FilterWheel):
