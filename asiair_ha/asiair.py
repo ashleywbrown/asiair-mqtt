@@ -171,8 +171,7 @@ class ZwoAsiair(ObservatorySoftware):
     async def set_control_value(self, value_name: str, value):
         error_code = await self.jsonrpc_call(4700, 'set_control_value', value_name, value)
         if error_code != 0:
-            raise RuntimeError("Non-zero exit code for " + function.__name__)
-        return value
+            raise RuntimeError(f"Non-zero exit code for set_control_value({value_name})")
 
     async def get_power_supply(self):
         result =  (await self.jsonrpc_call(4700, 'get_power_supply'))
@@ -271,12 +270,9 @@ class ZwoAsiair(ObservatorySoftware):
 
             async def poll_loop():
                 while True:
-                    # Publish all components.
                     try:
                         for device in self.devices.values():
-                            for component in device.components():
-                                logging.debug(component)
-                                await component.publish(device)
+                            await device.fetch_data()
                         await asyncio.sleep(45)
                     except Exception as ex:
                         logging.error(ex)
@@ -296,31 +292,23 @@ class ZwoAsiair(ObservatorySoftware):
         if event == "Exposure":
             if payload["state"] == "complete":
                 self.image_available.set()
-            await camera.state.publish(camera)
+            await camera.update_property('state', payload["state"], source='push')
         elif event == "Temperature":
-            camera.sensor_temperature = payload['value']
-            await camera.cooling.publish(camera)
+            await camera.update_property('cooling', payload['value'], source='push')
         elif event == "CoolerPower":
-            await camera.cooler_power.publish(camera)
+            await camera.update_property('cooler_power', payload['value'], source='push')
         elif event == 'ImageDownload':
-            camera.latest_image = payload
-            await camera.image.publish(camera)
-            # We don't need to keep sending this on poll.
-            camera.latest_image = None
+            await camera.update_property('image', payload, source='push')
         elif event == "PiStatus":
             asiair.pi_status = FromJson(payload)
             await asiair.cpu_temp.publish(asiair)
         elif event == "ScopeTrack":
-            await telescope.tracking.publish(telescope)
+            await telescope.update_property('tracking', payload["state"] == "on", source='push')
 
         if event == "WheelMove" and payload["state"] == "complete":
-            await efw.current.publish(efw)
+            await efw.update_property('current', payload['value'], source='push')
         elif event == "CameraControlChange":
-            for component in [camera.gain, camera.exposure_seconds, camera.cooler_power, camera.dewheater, camera.cooling]:
-                try:
-                    await component.publish(camera)
-                except Exception as ex:
-                    logging.error('exception %s', ex)
+            await camera.fetch_data()
         elif event == "ScopeTrack":
             await self.update_q.put({'method': 'scope_get_track_state', 'code': 0, 'result': payload["state"] == "on"})
 
@@ -761,8 +749,6 @@ class FilterWheel(ZwoAsiairDevice, FilterWheel):
 class AsiAirCamera(ZwoAsiairDevice, Camera):
     """ The ASIAIR camera. """
     def __init__(self, parent: ZwoAsiair, name):
-        self.sensor_temperature = None
-        self.latest_image = None
         super().__init__(parent, name)
 
     def get_mqtt_device_config(self):
@@ -774,9 +760,6 @@ class AsiAirCamera(ZwoAsiairDevice, Camera):
             'identifiers': [pi_info.guid + '_camera'],
             'suggested_area': 'Observatory',
         }
-
-    async def _image(self):
-        return self.latest_image
 
     async def _device_name(self):
         return (await self.parent.jsonrpc_call(4700, 'get_camera_state'))['name']
@@ -799,40 +782,39 @@ class AsiAirCamera(ZwoAsiairDevice, Camera):
     async def _exposure_seconds(self):
         return await self.parent.get_control_value('Exposure') / (1000*1000)
 
-    #@switch(
-    #    name='Dew Heater',
-    #    icon='mdi:heating-coil',
-    #) 
     async def _dewheater(self):
         return bool(await self.parent.get_control_value('AntiDewHeater'))
 
-    #@dewheater.command
     async def _set_dewheater(self, value):
         error_code = await self.parent.jsonrpc_call(4700, 'set_control_value', 'AntiDewHeater', int(value))
         if error_code == 0:
-            return value # return the latest value for publication.
+            await self.update_property('dewheater', value, source='push')
         else:
-            raise RuntimeError("Non-zero exit code for " + function.__name__)
+            raise RuntimeError("Non-zero exit code for _set_dewheater")
 
     async def _cooling_current_temperature(self):
-        return self.sensor_temperature
+        return self.get_property('cooling')
 
     async def _cooling_target_temperature(self):
         return await self.parent.get_control_value('TargetTemp')
 
     async def _set_cooling_target_temperature(self, temp):
-        return await self.parent.set_control_value('TargetTemp', temp)
+        await self.parent.set_control_value('TargetTemp', temp)
+        await self.update_property('get_cooling_temperature', temp, source='push')
 
     async def _cooling_mode(self):
         return 'cool' if bool(await self.parent.get_control_value('CoolerOn')) else 'off'
 
     async def _set_cooling_mode(self, mode: str):
-        logging.error('Cooling mode %s', mode)
-        await self.parent.set_control_value('CoolerOn', 1 if mode != 'off' else 0)
-        return mode
+        logging.debug('Setting cooling mode to %s', mode)
+        is_on = 1 if mode != 'off' else 0
+        await self.parent.set_control_value('CoolerOn', is_on)
+        await self.update_property('cooling_mode', mode, source='push')
 
     async def _set_cooling_power(self, onoff: str):
-        await self.parent.set_control_value('CoolerOn', int(onoff != 'OFF'))
+        is_on = int(onoff != 'OFF')
+        await self.parent.set_control_value('CoolerOn', is_on)
+        await self.update_property('cooling_mode', 'cool' if is_on else 'off', source='push')
 
     async def _cooling_action(self):
         return await self.parent.get_control_value('CoolPowerPerc')

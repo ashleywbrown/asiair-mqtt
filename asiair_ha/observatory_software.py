@@ -15,6 +15,7 @@
 # sending multiple updates.
 
 import logging
+import time
 from const import DEVICE_TYPE_CAMERA_ICON, DEVICE_TYPE_FILTERWHEEL_ICON, DEVICE_TYPE_TELESCOPE_ICON, STATE_CLASS_MEASUREMENT, UNIT_OF_MEASUREMENT_DEGREE, UNIT_OF_MEASUREMENT_NONE, UNIT_OF_MEASUREMENT_PERCENTAGE, UNIT_OF_MEASUREMENT_SECONDS
 from hass_mqtt import camera, climate, device_tracker, sensor, switch
 
@@ -57,6 +58,8 @@ class Device:
     def __init__(self, parent: ObservatorySoftware, name: str):
         self.parent = parent
         self.name = name
+        self._cache = {}
+        self._last_push = {}
         super().__init__()
 
     def components(self):
@@ -73,6 +76,37 @@ class Device:
     def get_mqtt_device_config(self):
         raise NotImplementedError
 
+    def get_property(self, name):
+        return self._cache.get(name)
+
+    async def update_property(self, name, value, source='poll'):
+        now = time.time()
+        if source == 'push':
+            self._last_push[name] = now
+        elif source == 'poll':
+            last = self._last_push.get(name, 0)
+            if now - last < 1.0:
+                return # Suppress poll update if push was recent
+
+        self._cache[name] = value
+        
+        if hasattr(self, name):
+            component = getattr(self, name)
+            if hasattr(component, 'publish'):
+                await component.publish(self)
+
+    async def fetch_data(self):
+        """ Fetches data for all pollable properties and updates the cache. """
+        pass
+
+    async def _try_fetch(self, name, func):
+        try:
+            await self.update_property(name, await func())
+        except NotImplementedError:
+            pass
+        except Exception as e:
+            logging.error(f"Error fetching {name} for {self.name}: {e}")
+
 class Camera(Device):
 
     @camera(
@@ -81,7 +115,7 @@ class Camera(Device):
         icon=DEVICE_TYPE_CAMERA_ICON,
     ) 
     async def image(self):
-        return await self._image()
+        return self.get_property('image')
     
     async def _image(self):
         raise NotImplementedError
@@ -92,7 +126,7 @@ class Camera(Device):
         icon=DEVICE_TYPE_CAMERA_ICON,
     ) 
     async def device_name(self):
-        return await self._device_name()
+        return self.get_property('device_name')
     
     async def _device_name(self):
         return NotImplementedError
@@ -104,7 +138,7 @@ class Camera(Device):
         state_class=STATE_CLASS_MEASUREMENT,
     ) 
     async def cooler_power(self):
-        return await self._cooler_power()
+        return self.get_property('cooler_power')
     
     async def _cooler_power(self):
         raise NotImplementedError
@@ -116,7 +150,7 @@ class Camera(Device):
         state_class=STATE_CLASS_MEASUREMENT,
     ) 
     async def gain(self):
-        return await self._gain()
+        return self.get_property('gain')
     
     async def _gain(self):
         raise NotImplementedError
@@ -129,7 +163,7 @@ class Camera(Device):
         state_class=STATE_CLASS_MEASUREMENT,
     ) 
     async def exposure_seconds(self):
-        return await self._exposure_seconds()
+        return self.get_property('exposure_seconds')
     
     async def _exposure_seconds(self):
         raise NotImplementedError
@@ -139,7 +173,7 @@ class Camera(Device):
         icon='mdi:heating-coil',
     ) 
     async def dewheater(self):
-        return await self._dewheater()
+        return self.get_property('dewheater')
     
     async def _dewheater(self):
         raise NotImplementedError
@@ -161,14 +195,14 @@ class Camera(Device):
         action_template='{% if value_json == 0 %}off{% else %}cooling{% endif %}',
         )
     async def cooling(self):
-        return await self._cooling_current_temperature()
+        return self.get_property('cooling')
     
     async def _cooling_current_temperature(self):
         raise NotImplementedError
 
     @cooling.temperature_state
     async def get_cooling_temperature(self):
-        return await self._cooling_target_temperature()
+        return self.get_property('get_cooling_temperature')
     
     async def _cooling_target_temperature(self):
         raise NotImplementedError
@@ -182,7 +216,7 @@ class Camera(Device):
 
     @cooling.mode_state
     async def cooling_mode(self):
-        return await self._cooling_mode()
+        return self.get_property('cooling_mode')
     
     async def _cooling_mode(self):
         raise NotImplementedError
@@ -203,10 +237,22 @@ class Camera(Device):
 
     @cooling.action
     async def cooling_action(self):
-        return await self._cooling_action()
+        return self.get_property('cooling_action')
     
     async def _cooling_action(self):
         raise NotImplementedError
+
+    async def fetch_data(self):
+        await self._try_fetch('device_name', self._device_name)
+        await self._try_fetch('cooler_power', self._cooler_power)
+        await self._try_fetch('gain', self._gain)
+        await self._try_fetch('exposure_seconds', self._exposure_seconds)
+        await self._try_fetch('dewheater', self._dewheater)
+        await self._try_fetch('cooling', self._cooling_current_temperature)
+        await self._try_fetch('get_cooling_temperature', self._cooling_target_temperature)
+        await self._try_fetch('cooling_mode', self._cooling_mode)
+        await self._try_fetch('cooling_action', self._cooling_action)
+        # Image is typically pushed, not polled
 
 class Telescope(Device):
     @sensor(
@@ -217,7 +263,7 @@ class Telescope(Device):
         suggested_display_precision=3,
     ) 
     async def altitude(self):
-        return await self._altitude()
+        return self.get_property('altitude')
     
     async def _altitude(self):
         raise NotImplementedError
@@ -230,7 +276,7 @@ class Telescope(Device):
         suggested_display_precision=3,
     ) 
     async def azimuth(self):
-        return await self._azimuth()
+        return self.get_property('azimuth')
     
     async def _azimuth(self):
         raise NotImplementedError
@@ -243,7 +289,7 @@ class Telescope(Device):
         suggested_display_precision=3,
     ) 
     async def right_ascension(self):
-        return await self._right_ascension()
+        return self.get_property('right_ascension')
     
     async def _right_ascension(self):
         raise NotImplementedError
@@ -256,7 +302,7 @@ class Telescope(Device):
         suggested_display_precision=3,
     ) 
     async def declination(self):
-        return await self._declination()
+        return self.get_property('declination')
     
     async def _declination(self):
         raise NotImplementedError
@@ -266,7 +312,7 @@ class Telescope(Device):
         icon=DEVICE_TYPE_TELESCOPE_ICON,
     ) 
     async def track_mode(self):
-        return await self._track_mode()
+        return self.get_property('track_mode')
     
     async def _track_mode(self):
         raise NotImplementedError
@@ -276,7 +322,7 @@ class Telescope(Device):
         icon=DEVICE_TYPE_TELESCOPE_ICON,
     ) 
     async def tracking(self):
-        return await self._tracking()
+        return self.get_property('tracking')
     
     @tracking.command
     async def set_tracking(self, on: bool):
@@ -284,7 +330,7 @@ class Telescope(Device):
     
     @tracking.json_attributes
     async def tracking_attributes(self):
-        return await self._tracking_attributes()
+        return self.get_property('tracking_attributes')
 
     async def _tracking(self):
         raise NotImplementedError
@@ -303,14 +349,28 @@ class Telescope(Device):
         subscription_topics=['json_attributes'],
     )
     async def site_location(self):
-        location = await self._site_latlon()
-        return {
-            'latitude': location[0],
-            'longitude': location[1],
-        }
+        return self.get_property('site_location')
     
     async def _site_latlon(self):
         raise NotImplementedError
+
+    async def fetch_data(self):
+        await self._try_fetch('altitude', self._altitude)
+        await self._try_fetch('azimuth', self._azimuth)
+        await self._try_fetch('right_ascension', self._right_ascension)
+        await self._try_fetch('declination', self._declination)
+        await self._try_fetch('track_mode', self._track_mode)
+        await self._try_fetch('tracking', self._tracking)
+        await self._try_fetch('tracking_attributes', self._tracking_attributes)
+        
+        try:
+            location = await self._site_latlon()
+            await self.update_property('site_location', {
+                'latitude': location[0],
+                'longitude': location[1],
+            })
+        except:
+            pass
 
 class FilterWheel(Device):
     @sensor(
@@ -320,7 +380,10 @@ class FilterWheel(Device):
         unique_id='1236qw345h6'
     ) 
     async def current(self):
-        return await self._current()
+        return self.get_property('current')
     
     async def _current(self):
         raise NotImplementedError
+
+    async def fetch_data(self):
+        await self._try_fetch('current', self._current)
