@@ -2,9 +2,10 @@ import json
 import logging
 import aiohttp
 import asyncio
+import re
 
 from const import DEVICE_TYPE_CAMERA_ICON
-from hass_mqtt import mqtt_device, sensor, switch
+from hass_mqtt import mqtt_device, number, sensor, switch
 from observatory_software import Camera, Device, FilterWheel, ObservatorySoftware, Telescope
 from cachetools import TTLCache
 from cachetools_async import cached
@@ -106,13 +107,44 @@ class Nina(ObservatorySoftware):
                             await self.update_property(prop_name, value, source='push')
                         return setter
 
+                    def get_unit_and_class(name):
+                        match = re.search(r'\(([^)]+)\)$', name)
+                        if match:
+                            unit = match.group(1)
+                            if unit == 'V':
+                                return ('V', 'voltage')
+                            elif unit == 'W':
+                                return ('W', 'power')
+                            elif unit == '%':
+                                return ('%', None)
+                            elif unit in ['°', 'C', '°C']:
+                                return ('°C', 'temperature')
+                            return (unit, None)
+                        return (None, None)
+
                     for sw in switch_info.get('WritableSwitches', []):
                         s_id = sw['Id']
                         s_name = sw['Name']
                         prop_name = f"switch_{s_id}"
                         getter = make_getter(prop_name)
                         getter.__name__ = prop_name
-                        comp = switch(name=s_name)(getter)
+                        
+                        if sw.get('Minimum') == 0 and sw.get('Maximum') == 1 and sw.get('StepSize') == 1:
+                            comp = switch(name=s_name)(getter)
+                        else:
+                            unit, dev_class = get_unit_and_class(s_name)
+                            precision = 2 if dev_class in ['voltage', 'power'] else None
+                            comp = number(
+                                name=s_name,
+                                min=sw.get('Minimum'),
+                                max=sw.get('Maximum'),
+                                step=sw.get('StepSize'),
+                                mode='box',
+                                unit_of_measurement=unit,
+                                device_class=dev_class,
+                                suggested_display_precision=precision
+                            )(getter)
+
                         comp.command(make_setter(s_id, prop_name))
                         methods[prop_name] = comp
 
@@ -122,7 +154,9 @@ class Nina(ObservatorySoftware):
                         prop_name = f"sensor_{s_id}"
                         getter = make_getter(prop_name)
                         getter.__name__ = prop_name
-                        comp = sensor(name=s_name)(getter)
+                        unit, dev_class = get_unit_and_class(s_name)
+                        precision = 2 if dev_class in ['voltage', 'power'] else None
+                        comp = sensor(name=s_name, unit_of_measurement=unit, device_class=dev_class, suggested_display_precision=precision)(getter)
                         methods[prop_name] = comp
 
                     async def fetch_data(self):
@@ -158,7 +192,7 @@ class Nina(ObservatorySoftware):
             #print("Status:", response.status)
             #print("Content-type:", response.headers['content-type'])
             json = await response.json()
-            #print(json)
+            print(json)
             return json['Response']
 
     async def get_camera_info(self):
