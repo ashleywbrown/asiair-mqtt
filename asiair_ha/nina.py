@@ -4,7 +4,7 @@ import aiohttp
 import asyncio
 
 from const import DEVICE_TYPE_CAMERA_ICON
-from hass_mqtt import mqtt_device
+from hass_mqtt import mqtt_device, sensor, switch
 from observatory_software import Camera, Device, FilterWheel, ObservatorySoftware, Telescope
 from cachetools import TTLCache
 from cachetools_async import cached
@@ -81,6 +81,65 @@ class Nina(ObservatorySoftware):
                     await camera.update_property('cooling', stats['Temperature'], source='push')
 
     async def discover(self):
+        if 'switch' not in self.devices:
+            try:
+                switch_info = await self.get_switch_info()
+                if switch_info and (switch_info.get('WritableSwitches') or switch_info.get('ReadonlySwitches')):
+                    methods = {
+                        'get_mqtt_device_config': lambda self: {
+                            'name': 'NINA ({0}:{1}) - Switches'.format(self.parent.host, self.parent.port),
+                            'model': 'Switches',
+                            'manufacturer': 'NINA',
+                            'identifiers': [self.uuid()],
+                            'suggested_area': 'Observatory',
+                        }
+                    }
+
+                    def make_getter(prop_name):
+                        async def getter(self):
+                            return self.get_property(prop_name)
+                        return getter
+
+                    def make_setter(s_id, prop_name):
+                        async def setter(self, value):
+                            await self.parent.set_switch(s_id, value)
+                            await self.update_property(prop_name, value, source='push')
+                        return setter
+
+                    for sw in switch_info.get('WritableSwitches', []):
+                        s_id = sw['Id']
+                        s_name = sw['Name']
+                        prop_name = f"switch_{s_id}"
+                        getter = make_getter(prop_name)
+                        getter.__name__ = prop_name
+                        comp = switch(name=s_name)(getter)
+                        comp.command(make_setter(s_id, prop_name))
+                        methods[prop_name] = comp
+
+                    for sw in switch_info.get('ReadonlySwitches', []):
+                        s_id = sw['Id']
+                        s_name = sw['Name']
+                        prop_name = f"sensor_{s_id}"
+                        getter = make_getter(prop_name)
+                        getter.__name__ = prop_name
+                        comp = sensor(name=s_name)(getter)
+                        methods[prop_name] = comp
+
+                    async def fetch_data(self):
+                        info = await self.parent.get_switch_info()
+                        if not info: return
+                        for sw in info.get('WritableSwitches', []) + info.get('ReadonlySwitches', []):
+                            prop_name = f"switch_{sw['Id']}"
+                            if not hasattr(self, prop_name):
+                                prop_name = f"sensor_{sw['Id']}"
+                            if hasattr(self, prop_name):
+                                await self.update_property(prop_name, sw['Value'])
+                    
+                    methods['fetch_data'] = fetch_data
+                    NinaSwitch = mqtt_device()(type('NinaSwitch', (NinaDevice,), methods))
+                    self.devices['switch'] = NinaSwitch(self, 'switch')
+            except Exception as e:
+                logging.error("Error discovering switches: %s", e)
         return self.devices
 
     async def poll(self):
@@ -110,6 +169,12 @@ class Nina(ObservatorySoftware):
     
     async def get_fw_info(self):
         return await self._poll('equipment/filterwheel/info')
+
+    async def get_switch_info(self):
+        return await self._poll('equipment/switch/info')
+
+    async def set_switch(self, id, value):
+        await self._get(f'equipment/switch/{id}', value=json.dumps(value))
 
     async def set_dewheater(self, on: bool):
         await self._get('equipment/camera/dew-heater', power=json.dumps(on))
