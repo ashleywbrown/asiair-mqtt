@@ -134,17 +134,18 @@ class Nina(ObservatorySoftware):
                             comp = switch(name=s_name)(getter)
                         else:
                             unit, dev_class = get_unit_and_class(s_name)
-                            precision = 2 if dev_class in ['voltage', 'power'] else None
-                            comp = number(
-                                name=s_name,
-                                min=sw.get('Minimum'),
-                                max=sw.get('Maximum'),
-                                step=sw.get('StepSize'),
-                                mode='box',
-                                unit_of_measurement=unit,
-                                device_class=dev_class,
-                                suggested_display_precision=precision
-                            )(getter)
+                            kwargs = {
+                                'name': s_name,
+                                'min': sw.get('Minimum'),
+                                'max': sw.get('Maximum'),
+                                'step': sw.get('StepSize'),
+                                'mode': 'box',
+                                'unit_of_measurement': unit,
+                                'device_class': dev_class,
+                            }
+                            if dev_class in ['voltage', 'power']:
+                                kwargs['suggested_display_precision'] = 2
+                            comp = number(**kwargs)(getter)
 
                         comp.command(make_setter(s_id, prop_name))
                         methods[prop_name] = comp
@@ -156,8 +157,15 @@ class Nina(ObservatorySoftware):
                         getter = make_getter(prop_name)
                         getter.__name__ = prop_name
                         unit, dev_class = get_unit_and_class(s_name)
-                        precision = 2 if dev_class in ['voltage', 'power'] else None
-                        comp = sensor(name=s_name, unit_of_measurement=unit, device_class=dev_class, suggested_display_precision=precision)(getter)
+                        
+                        kwargs = {
+                            'name': s_name,
+                            'unit_of_measurement': unit,
+                            'device_class': dev_class,
+                        }
+                        if dev_class in ['voltage', 'power']:
+                            kwargs['suggested_display_precision'] = 2
+                        comp = sensor(**kwargs)(getter)
                         methods[prop_name] = comp
 
                     async def fetch_data(self):
