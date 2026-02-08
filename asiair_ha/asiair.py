@@ -308,7 +308,13 @@ class ZwoAsiair(ObservatorySoftware):
             await telescope.update_property('tracking', payload["state"] == "on", source='push')
 
         if event == "WheelMove" and payload["state"] == "complete":
-            await efw.update_property('current', payload['value'], source='push')
+            position = payload.get('position')
+            # The filter wheel names are cached on the efw device itself from polling.
+            if position is not None and efw.wheel_names and len(efw.wheel_names) > position:
+                await efw.update_property('current', efw.wheel_names[position], source='push')
+            else:
+                # Fallback to a full poll if we don't have the info needed.
+                await efw.fetch_data()
         elif event == "CameraControlChange":
             await camera.fetch_data()
         elif event == "ScopeTrack":
