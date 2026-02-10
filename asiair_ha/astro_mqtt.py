@@ -43,35 +43,15 @@ async def command_router(cmd_q: asyncio.Queue):
         except Exception as ex:
             logging.error(traceback.format_exc())
 
-async def main():
-    cmd_q = asyncio.Queue()
-    connections = {
-        'asiair': ZwoAsiair.create('ASIAIR', address=asiair_host),
-        'nina': Nina.create('NINA', host='astrobee'),
-#        'stellarium': Stellarium.create('Stellarium Mac', host='MacStudio'),
-#        'planetarium': Stellarium.create('Planetarium', host='ObservatoryMiniPC')
-    }
-    for name, cnx in connections.items():
-        # We run this sequentially as parallel connection creation
-        # creates messy logs which are hard to debug.
-        logging.info('Opening connections for "%s"', name)
-        await cnx.connect()
-
-    logging.info("Connecting MQTT: %s : %d", mqtt_host, mqtt_port)
-    clientMQTT = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2, userdata=connections)
-    if mqtt_username and mqtt_password:
-        clientMQTT.username_pw_set(username=mqtt_username, password=mqtt_password)
-    clientMQTT.connect(mqtt_host, mqtt_port, 60)
-    clientMQTT.loop_start()
-    logging.info("Discovering devices...")
-
-    all_devices = []
-    for cnx_name, cnx in connections.items():
+async def register_devices(cnx_name, cnx, clientMQTT, cmd_q):
+    logging.info(f"Discovering devices for {cnx_name}...")
+    try:
         device_list = await cnx.discover()
-        for device in device_list.values():
-            all_devices.append((cnx_name, device))
+    except Exception as e:
+        logging.error(f"Discovery failed for {cnx_name}: {e}")
+        return
 
-    for (cnx_name, device) in all_devices:
+    for device in device_list.values():
         dv = device.get_mqtt_device_config()
         discovery_topic = 'homeassistant/device/astro_mqtt/{0}/config'.format(cnx_name) # remove hard coding
         logging.debug(type(device).__name__ + ': ' + str(dv))
@@ -109,7 +89,6 @@ async def main():
             
             config['unique_id'] = '{0}.{1}.{2}'.format(cnx_name, device.uuid(), component.component_id)
             components[component.component_id] = config
-            #component.set_on_publish(lambda component, topic, payload, root_topic=component_root_topic: clientMQTT.publish(root_topic + ('' if topic == '' else '/' + topic ), payload, qos=1))
         
         def on_publish(mqtt_component, topic, payload, device_root_topic):
             clientMQTT.publish(device_root_topic + '/' + mqtt_component.component_id + ('' if topic == '' else '/' + topic ), payload, qos=1)
@@ -126,9 +105,35 @@ async def main():
         }
         logging.debug(' Registering device %s', discovery_payload)
         clientMQTT.publish(discovery_topic, json.dumps(discovery_payload), qos=0, retain=True)
+
+async def main():
+    cmd_q = asyncio.Queue()
+    connections = {
+        'asiair': ZwoAsiair.create('ASIAIR', address=asiair_host),
+        'nina': Nina.create('NINA', host='astrobee'),
+#        'stellarium': Stellarium.create('Stellarium Mac', host='MacStudio'),
+#        'planetarium': Stellarium.create('Planetarium', host='ObservatoryMiniPC')
+    }
+    for name, cnx in connections.items():
+        # We run this sequentially as parallel connection creation
+        # creates messy logs which are hard to debug.
+        logging.info('Opening connections for "%s"', name)
+        await cnx.connect()
+
+    logging.info("Connecting MQTT: %s : %d", mqtt_host, mqtt_port)
+    clientMQTT = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2, userdata=connections)
+    if mqtt_username and mqtt_password:
+        clientMQTT.username_pw_set(username=mqtt_username, password=mqtt_password)
+    clientMQTT.connect(mqtt_host, mqtt_port, 60)
+    clientMQTT.loop_start()
+    logging.info("Discovering devices...")
     
-    polling = list(map(lambda cnx: cnx.poll(), connections.values()))
-    logging.info("Starting... %d", len(polling))
-    await asyncio.gather(command_router(cmd_q), *polling)
+    tasks = [command_router(cmd_q)]
+    for cnx_name, cnx in connections.items():
+        tasks.append(cnx.poll())
+        tasks.append(register_devices(cnx_name, cnx, clientMQTT, cmd_q))
+    
+    logging.info("Starting main loop...")
+    await asyncio.gather(*tasks)
 
 asyncio.run(main())

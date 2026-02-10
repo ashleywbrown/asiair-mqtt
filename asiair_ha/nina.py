@@ -187,7 +187,7 @@ class Nina(ObservatorySoftware):
 
     async def poll(self):
         while True:
-            for device in self.devices.values():
+            for device in list(self.devices.values()):
                 await device.fetch_data()
             await asyncio.sleep(20)
     

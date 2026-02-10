@@ -238,11 +238,12 @@ class ZwoAsiair(ObservatorySoftware):
         await cmd_q.put((command, args, event))
         # would be better as a single-item queue
         await event.wait()
-        if event.result is not None:
+        if hasattr(event, 'result') and event.result is not None:
             return event.result
         else:
-            logging.error('Error during synchronous call: %s', event.error)
-            sys.exit(0)
+            error = getattr(event, 'error', 'Unknown error')
+            logging.error('Error during synchronous call: %s', error)
+            raise RuntimeError(f"JSONRPC call failed: {error}")
 
     async def discover(self):
         self.pi_info = FromJson(await self.jsonrpc_call(4700, 'pi_get_info'))
@@ -250,39 +251,38 @@ class ZwoAsiair(ObservatorySoftware):
         return self.devices
   
     async def poll(self):
+        logging.debug(">>>>>>>>>>>>>>>>>>> Getting filter wheel")
         try:
-            logging.debug(">>>>>>>>>>>>>>>>>>> Getting filter wheel")
             (self.wheel_names, position) = await asyncio.gather(
                 self.jsonrpc_call(4700, 'get_wheel_slot_name'),
                 self.jsonrpc_call(4700, 'get_wheel_position')
             )
             if len(self.wheel_names) > 0:
                 await self.update_q.put({'method': 'WheelName', 'code': 0, 'result': self.wheel_names[position]}),
+        except Exception as e:
+            logging.error(f"Failed to fetch initial filter wheel info: {e}")
 
-            # Process events from the event queue.
-            async def event_loop():
-                while True:
-                    try:
-                        (event, payload) = await self.event_q.get()
-                        await self._handle_event(event, payload)
-                    except Exception as ex:
-                        logging.error(ex)
-                        sys.exit(0)
+        # Process events from the event queue.
+        async def event_loop():
+            while True:
+                try:
+                    (event, payload) = await self.event_q.get()
+                    await self._handle_event(event, payload)
+                except Exception as ex:
+                    logging.error(f"Event loop error: {ex}")
 
-            async def poll_loop():
-                while True:
-                    try:
-                        for device in self.devices.values():
-                            await device.fetch_data()
-                        await asyncio.sleep(45)
-                    except Exception as ex:
-                        logging.error(ex)
-                        sys.exit(0)
-            logging.debug(">>>>>>>>>>>>>>>>>>> Polling")
-            asyncio.gather(poll_loop(), event_loop(), self.port4400, self.port4700, self.images)
-        except Exception as ex:
-            logging.error("Poll error %s", ex)
-            sys.exit(0)
+        async def poll_loop():
+            while True:
+                try:
+                    for device in self.devices.values():
+                        await device.fetch_data()
+                    await asyncio.sleep(45)
+                except Exception as ex:
+                    logging.error(f"Poll loop error: {ex}")
+                    await asyncio.sleep(45)
+
+        logging.debug(">>>>>>>>>>>>>>>>>>> Polling")
+        await asyncio.gather(poll_loop(), event_loop(), self.port4400, self.port4700, self.images)
 
     async def _handle_event(self, event, payload: dict|bytearray):
         logging.debug('Event %s %s', event, payload)
@@ -413,6 +413,7 @@ class ZwoAsiair(ObservatorySoftware):
                 # Clear pending events to unblock waiters
                 for event in event_map.values():
                     event.error = "Connection lost"
+                    event.result = None
                     event.set()
                 event_map.clear()
 
