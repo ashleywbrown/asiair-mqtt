@@ -330,112 +330,184 @@ class ZwoAsiair(ObservatorySoftware):
     async def read_events(self, cmd_q, port: int):
         q = self.update_q
         event_map = {}
-        print("Connecting to port " + str(port))
-        reader, writer = await asyncio.open_connection('asiair', port)
-
-        async def exec_and_keepalive(interval_seconds: int = 8):
-            id = 1
-            while True:
-                try:
-                    command = await asyncio.wait_for(cmd_q.get(), interval_seconds)
-                    if isinstance(command, tuple) and len(command) == 3:
-                        (method, args, event) = command
-                        command = (method, args)
-                        event_map[id] = event
-                    writer.write((json.dumps(jsonrpc.make_command(id, command)) + "\r\n").encode())
-                    id += 1
-                except asyncio.TimeoutError:
-                    await self.jsonrpc_call_async(port, "test_connection")
-                except Exception as ex:
-                    logging.error("Failed in command handling: %s", ex)
-
-        keepalive = asyncio.create_task(exec_and_keepalive())
+        
         while True:
-            message = await reader.readline()
-            if not message:
-                print("EOF on port " + str(port))
-                break
-            #print("Putting on Q: " + message.decode())
-            message = message.replace(b"<\x90\xadE\xb6>", b"???")
-            message = message.replace(b"<\xe8>", b"???")
-            message = message.decode('iso-8859-1')
             try:
-                message = json.loads(message)
-                if "method" in message and message["id"] in event_map:
-#                    logging.debug("Reponse to message %d", message["id"])
-                    event = event_map[message["id"]]
-                    try:
-                        event.result = message["result"]
-                    except KeyError as ke:
-                        event.result = None
-                        event.error = message.get("error", None)
-                    event.set()
+                print("Connecting to port " + str(port))
+                reader, writer = await asyncio.open_connection(self._address, port)
+                logging.info(f"Connected to {self._address}:{port}")
 
-                # Handle any immediate routing/updates.
-                #logging.debug("Received %s", message)
-                if "Event" in message:
+                async def exec_and_keepalive(interval_seconds: int = 8):
+                    id = 1
+                    while True:
+                        try:
+                            command = await asyncio.wait_for(cmd_q.get(), interval_seconds)
+                            if isinstance(command, tuple) and len(command) == 3:
+                                (method, args, event) = command
+                                command = (method, args)
+                                event_map[id] = event
+                            
+                            try:
+                                writer.write((json.dumps(jsonrpc.make_command(id, command)) + "\r\n").encode())
+                                await writer.drain()
+                            except Exception as e:
+                                logging.error(f"Write failed on port {port}: {e}")
+                                try:
+                                    writer.close()
+                                except:
+                                    pass
+                                raise e
+
+                            id += 1
+                        except asyncio.TimeoutError:
+                            await self.jsonrpc_call_async(port, "test_connection")
+                        except Exception as ex:
+                            logging.error("Failed in command handling: %s", ex)
+                            if isinstance(ex, (ConnectionError, OSError)):
+                                break
+
+                keepalive = asyncio.create_task(exec_and_keepalive())
+
+                while True:
                     try:
-                        #await self._handle_event(message["Event"], message)
-                        await self.event_q.put((message['Event'], message))
+                        message = await reader.readline()
+                    except Exception as e:
+                        logging.error(f"Read error on port {port}: {e}")
+                        break
+
+                    if not message:
+                        print("EOF on port " + str(port))
+                        break
+                    
+                    message = message.replace(b"<\x90\xadE\xb6>", b"???")
+                    message = message.replace(b"<\xe8>", b"???")
+                    message = message.decode('iso-8859-1')
+                    try:
+                        message = json.loads(message)
+                        if "method" in message and message["id"] in event_map:
+                            event = event_map[message["id"]]
+                            try:
+                                event.result = message["result"]
+                            except KeyError as ke:
+                                event.result = None
+                                event.error = message.get("error", None)
+                            event.set()
+                            del event_map[message["id"]]
+
+                        if "Event" in message:
+                            try:
+                                await self.event_q.put((message['Event'], message))
+                            except Exception as ex:
+                                logging.error(f"Error putting event on queue: {ex}")
+                        
+                        await q.put(message)
                     except Exception as ex:
-                        logging.debug(ex)
-                        sys.exit(1)
-                # Send it to the legacy queue.
-                await q.put(message)
+                        logging.error(f"Error processing message: {ex}")
+                
+                keepalive.cancel()
+                try:
+                    await keepalive
+                except asyncio.CancelledError:
+                    pass
+                
+                # Clear pending events to unblock waiters
+                for event in event_map.values():
+                    event.error = "Connection lost"
+                    event.set()
+                event_map.clear()
+
+                try:
+                    writer.close()
+                    await writer.wait_closed()
+                except:
+                    pass
+
             except Exception as ex:
-                logging.error(ex)
-        await keepalive
+                logging.error(f"Connection error on port {port}: {ex}")
+            
+            logging.info(f"Reconnecting to ASIAIR port {port} in 5 seconds...")
+            await asyncio.sleep(5)
 
     async def read_images(self, port=4800):
         image_available = self.image_available
-        id = 1
+        
         while True:
             try:
-                await image_available.wait()
-                image_available.clear()
-                reader, writer = await asyncio.open_connection('asiair', port)
-                command = "get_current_img"
-                writer.write((json.dumps({"id": id, "method": command}) + "\r\n").encode())
-                await writer.drain()
-                id = id + 1
-                print(str(port) + " Reading 80")
-                header = await reader.readexactly(80) # Header, discard for now
-                # Byte 6-9 - size
-                # Byte 16,17 - width
-                # Byte 18,19 - height
-                if len(header) < 80:
-                    print(str(port) + " Failed to read header")
-                else:
+                print(f"Connecting to image port {port}")
+                reader, writer = await asyncio.open_connection(self._address, port)
+                logging.info(f"Connected to ASIAIR image port {port}")
+                
+                id = 1
+                while True:
+                    await image_available.wait()
+                    image_available.clear()
+                    
+                    try:
+                        command = "get_current_img"
+                        writer.write((json.dumps({"id": id, "method": command}) + "\r\n").encode())
+                        await writer.drain()
+                    except Exception as e:
+                        logging.error(f"Image write error: {e}")
+                        break
+
+                    id = id + 1
+                    print(str(port) + " Reading 80")
+                    
+                    try:
+                        header = await reader.readexactly(80)
+                    except Exception as e:
+                        logging.error(f"Image read header error: {e}")
+                        break
+
+                    if len(header) < 80:
+                        print(str(port) + " Failed to read header")
+                        break
+                    
                     (size, width, height) = struct.unpack("!xxxxxxIxxxxxxHHxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", header)
                     remaining = size
                     print(str(port) + " Header " + str((size, width, height)))
                     if width > 0:
                         logging.debug(str(port) + " Zipped Image Size: " + str(size) + " " + str(width) + "x" + str(height))
-                        with tempfile.TemporaryFile("w+b") as f:
-                            while remaining > 0:
-                                chunkSize = min(remaining, 4*1024*1024)
-                                chunk = await reader.read(chunkSize)
-                                f.write(chunk)
-                                remaining = remaining - len(chunk)
-                                print(str(port) + " Downloading... " + str(remaining))
-                            f.seek(0)
-                            z = zipfile.ZipFile(f)
-                            with z.open("raw_data", mode="r") as rawData:
-                                rawImage = np.ndarray(shape=(height, width), dtype="<u2", buffer=rawData.read())
-                                imageData = await ImageManipulation.normalize_image(rawImage)
-                                imageData = await ImageManipulation.compute_astropy_stretch(imageData)
-                                imageData = await ImageManipulation.resize_image(imageData)
-                                (result, imageData) = cv2.imencode(".png", imageData)
-                                byteArray = bytearray(imageData)
-                                print("MQTT publish result: " + str(result) + "; Len: " + str(len(byteArray)))
+                        try:
+                            with tempfile.TemporaryFile("w+b") as f:
+                                while remaining > 0:
+                                    chunkSize = min(remaining, 4*1024*1024)
+                                    chunk = await reader.read(chunkSize)
+                                    if not chunk:
+                                        raise Exception("Unexpected EOF reading image body")
+                                    f.write(chunk)
+                                    remaining = remaining - len(chunk)
+                                    print(str(port) + " Downloading... " + str(remaining))
+                                f.seek(0)
+                                z = zipfile.ZipFile(f)
+                                with z.open("raw_data", mode="r") as rawData:
+                                    rawImage = np.ndarray(shape=(height, width), dtype="<u2", buffer=rawData.read())
+                                    imageData = await ImageManipulation.normalize_image(rawImage)
+                                    imageData = await ImageManipulation.compute_astropy_stretch(imageData)
+                                    imageData = await ImageManipulation.resize_image(imageData)
+                                    (result, imageData) = cv2.imencode(".png", imageData)
+                                    byteArray = bytearray(imageData)
+                                    print("MQTT publish result: " + str(result) + "; Len: " + str(len(byteArray)))
 
-                                # New path
-                                await self.event_q.put(('ImageDownload', byteArray))
+                                    await self.event_q.put(('ImageDownload', byteArray))
+                        except Exception as e:
+                            logging.error(f"Error processing image: {e}")
+                            break
                     else:
                         print(str(port) + " Width <= 0")
                         print(str(port) + " => " + str(header))
+                
+                try:
+                    writer.close()
+                    await writer.wait_closed()
+                except:
+                    pass
+
             except Exception as ex:
-                logging.error(ex)
+                logging.error(f"Image connection error: {ex}")
+            
+            logging.info(f"Reconnecting to ASIAIR image port {port} in 5 seconds...")
+            await asyncio.sleep(5)
 
 class ZwoAsiairDevice(Device):
     def __init__(self, parent: ZwoAsiair, name):
