@@ -4,3 +4,6 @@ requests
 aiohttp
 cachetools
 cachetools_async
+pyyaml
+paho-mqtt
+opencv-python-headless

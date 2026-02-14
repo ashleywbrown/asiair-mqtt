@@ -258,7 +258,7 @@ class NinaDevice(Device):
         super().__init__(parent, name)
 
     def uuid(self):
-        return '_'.join([self.parent.host, self.parent.port, self.parent.name, self.name])
+        return '_'.join([self.parent.host, str(self.parent.port), self.parent.name, self.name])
     
 @mqtt_device()
 class NinaCamera(NinaDevice, Camera):

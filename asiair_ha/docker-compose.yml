@@ -1,0 +1,13 @@
+services:
+  asiair-mqtt:
+    build: .
+    image: asiair-mqtt
+    container_name: asiair-mqtt
+    restart: unless-stopped
+    # Use host network mode to easily access local MQTT broker and devices on the LAN
+    network_mode: host
+    volumes:
+      - ./default.cfg:/app/default.cfg
+    # Override the command to pass the MQTT password or other flags
+    # Ensure you update default.cfg with your settings first
+    command: ["--config", "default.cfg", "--mqtt-password", "YOUR_PASSWORD"]
