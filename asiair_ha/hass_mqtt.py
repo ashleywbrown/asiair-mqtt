@@ -44,7 +44,7 @@ class MqttDevice():
     def set_device_topic(topic: str):
         '''Set the root topic for this device - used when publishing.'''
 
-    def publish(component_fn: function):
+    def publish(component_fn):
         '''Publish the value of the associated function to its MQTT topic.'''
 
 def component(

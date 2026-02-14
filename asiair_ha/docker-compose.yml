@@ -1,8 +1,8 @@
 services:
-  asiair-mqtt:
+  astro-mqtt:
     build: .
-    image: asiair-mqtt
-    container_name: asiair-mqtt
+    image: astro-mqtt
+    container_name: astro-mqtt
     restart: unless-stopped
     # Use host network mode to easily access local MQTT broker and devices on the LAN
     network_mode: host
