@@ -330,12 +330,14 @@ class ZwoAsiair(ObservatorySoftware):
     async def read_events(self, cmd_q, port: int):
         q = self.update_q
         event_map = {}
+        retry_delay = 5
         
         while True:
             try:
                 print("Connecting to port " + str(port))
                 reader, writer = await asyncio.open_connection(self._address, port)
                 logging.info(f"Connected to {self._address}:{port}")
+                retry_delay = 5
 
                 async def exec_and_keepalive(interval_seconds: int = 8):
                     id = 1
@@ -426,17 +428,20 @@ class ZwoAsiair(ObservatorySoftware):
             except Exception as ex:
                 logging.error(f"Connection error on port {port}: {ex}")
             
-            logging.info(f"Reconnecting to ASIAIR port {port} in 5 seconds...")
-            await asyncio.sleep(5)
+            logging.info(f"Reconnecting to ASIAIR port {port} in {retry_delay:.1f} seconds...")
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(retry_delay * 1.2, 120)
 
     async def read_images(self, port=4800):
         image_available = self.image_available
+        retry_delay = 5
         
         while True:
             try:
                 print(f"Connecting to image port {port}")
                 reader, writer = await asyncio.open_connection(self._address, port)
                 logging.info(f"Connected to ASIAIR image port {port}")
+                retry_delay = 5
                 
                 id = 1
                 while True:
@@ -507,8 +512,9 @@ class ZwoAsiair(ObservatorySoftware):
             except Exception as ex:
                 logging.error(f"Image connection error: {ex}")
             
-            logging.info(f"Reconnecting to ASIAIR image port {port} in 5 seconds...")
-            await asyncio.sleep(5)
+            logging.info(f"Reconnecting to ASIAIR image port {port} in {retry_delay:.1f} seconds...")
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(retry_delay * 1.2, 120)
 
 class ZwoAsiairDevice(Device):
     def __init__(self, parent: ZwoAsiair, name):

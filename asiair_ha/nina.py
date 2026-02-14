@@ -34,11 +34,13 @@ class Nina(ObservatorySoftware):
 
     async def listen_websocket(self):
         url = 'ws://{0}:{1}/v2/socket'.format(self.host, self.port)
+        retry_delay = 5
         while True:
             try:
                 logging.info("Connecting to NINA WebSocket: %s", url)
                 async with self.session.ws_connect(url) as ws:
                     logging.info("Connected to NINA WebSocket")
+                    retry_delay = 5
                     async for msg in ws:
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             logging.debug("NINA WS Message: %s", msg.data)
@@ -53,7 +55,9 @@ class Nina(ObservatorySoftware):
             except Exception as e:
                 logging.error("NINA WebSocket error: %s", e)
             
-            await asyncio.sleep(5)
+            logging.info(f"Reconnecting to NINA WebSocket in {retry_delay:.1f} seconds...")
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(retry_delay * 1.2, 120)
 
     async def handle_message(self, data):
         logging.debug("NINA Handle Message: %s", data)
@@ -187,8 +191,11 @@ class Nina(ObservatorySoftware):
 
     async def poll(self):
         while True:
-            for device in list(self.devices.values()):
-                await device.fetch_data()
+            try:
+                for device in list(self.devices.values()):
+                    await device.fetch_data()
+            except Exception as e:
+                logging.error(f"Error during NINA poll: {e}")
             await asyncio.sleep(20)
     
     @cached(cache=TTLCache(maxsize=30, ttl=10))
@@ -196,13 +203,17 @@ class Nina(ObservatorySoftware):
         return await self._get(path, **kwargs)
 
     async def _get(self, path, **kwargs):
-        async with self.session.get(path, params=kwargs) as response:
-            #print(response)
-            #print("Status:", response.status)
-            #print("Content-type:", response.headers['content-type'])
-            json = await response.json()
-            #print(json)
-            return json['Response']
+        try:
+            async with self.session.get(path, params=kwargs) as response:
+                #print(response)
+                #print("Status:", response.status)
+                #print("Content-type:", response.headers['content-type'])
+                json = await response.json()
+                #print(json)
+                return json['Response']
+        except Exception as e:
+            logging.error("Error requesting %s: %s", path, e)
+            return None
 
     async def get_camera_info(self):
         return await self._poll('equipment/camera/info')
