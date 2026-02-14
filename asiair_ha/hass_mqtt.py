@@ -32,7 +32,7 @@ class MqttDevice():
         logging.info('Class %s has %d components', cls.__name__, len(components))
 
 
-        def on_publish(self, mqtt_component, payload):
+        def on_publish(self, mqtt_component, topic, payload):
             logging.warning('No on_publish set for class %s', cls.__name__)
 
         cls.on_publish = on_publish

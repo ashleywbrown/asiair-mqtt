@@ -4,8 +4,8 @@ import aiohttp
 import asyncio
 import re
 
-from const import DEVICE_TYPE_CAMERA_ICON
-from hass_mqtt import mqtt_device, number, sensor, switch
+from const import DEVICE_TYPE_CAMERA_ICON, IMAGE_PUBLISH_DIMENSIONS
+from hass_mqtt import camera, mqtt_device, number, sensor, switch
 from observatory_software import Camera, Device, FilterWheel, Guider, ObservatorySoftware, Telescope
 from cachetools import TTLCache
 from cachetools_async import cached
@@ -77,14 +77,24 @@ class Nina(ObservatorySoftware):
             if new_filter and 'Name' in new_filter:
                 await fw.update_property('current', new_filter['Name'], source='push')
 
+        elif evt_type == 'IMAGE-PREPARED':
+            (w, h) = IMAGE_PUBLISH_DIMENSIONS
+            image_data = await self._get_binary('prepared-image', resize='true', size=f'{w}x{h}', format='png')
+            if image_data:
+                await self.devices['camera'].update_property('image', bytearray(image_data), source='push')
+
         elif evt_type == 'IMAGE-SAVE':
-            camera = self.devices['camera']
+            camera_device = self.devices['camera']
             stats = response.get('ImageStatistics')
             if stats:
-                if 'Gain' in stats:
-                    await camera.update_property('gain', stats['Gain'], source='push')
-                if 'Temperature' in stats:
-                    await camera.update_property('cooling', stats['Temperature'], source='push')
+                # Update attributes first, this just caches the value
+                await camera_device.update_property('latest_saved_image_attributes', stats, source='push')
+                
+                # Then get the image and publish the component
+                (w, h) = IMAGE_PUBLISH_DIMENSIONS
+                image_data = await self._get_binary('image/1', stream='true', resize='true', size=f'{w}x{h}', format='png')
+                if image_data:
+                    await camera_device.update_property('latest_saved_image', bytearray(image_data), source='push')
 
     async def discover(self):
         if 'switch' not in self.devices:
@@ -215,6 +225,16 @@ class Nina(ObservatorySoftware):
             logging.error("Error requesting %s: %s", path, e)
             return None
 
+    async def _get_binary(self, path, **kwargs):
+        try:
+            async with self.session.get(path, params=kwargs) as response:
+                if response.status == 200:
+                    return await response.read()
+                logging.error("Error requesting %s: Status %s", path, response.status)
+        except Exception as e:
+            logging.error("Error requesting %s: %s", path, e)
+        return None
+
     async def get_camera_info(self):
         return await self._poll('equipment/camera/info')
     
@@ -275,6 +295,17 @@ class NinaCamera(NinaDevice, Camera):
     async def fetch_value(self, value: str):
         return (await self.parent.get_camera_info())[value]
     
+    @camera(
+        name="Latest Saved Image",
+        icon=DEVICE_TYPE_CAMERA_ICON,
+    )
+    async def latest_saved_image(self):
+        return self.get_property('latest_saved_image')
+
+    @latest_saved_image.json_attributes
+    async def latest_saved_image_attributes(self):
+        return self.get_property('latest_saved_image_attributes')
+
     async def _device_name(self):
         return await self.fetch_value('Name')
 
